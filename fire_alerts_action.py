@@ -1,4 +1,4 @@
-"""NASA FIRMS Fire Alerts - multi-satellite GitHub Actions version."""
+"""NASA FIRMS Fire Alerts - multi-satellite, with fire clustering."""
 
 import csv
 import io
@@ -19,6 +19,10 @@ SOURCES = os.environ.get(
 DAY_RANGE = 1
 MIN_CONFIDENCE = os.environ.get("FIRE_MIN_CONFIDENCE", "nominal")
 REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
+
+# Detections closer than ~2 km are treated as one fire
+CLUSTER_DEG = 0.02
+MAX_ITEMS = 35
 
 SEEN_FILE = "seen_fires.json"
 CONF_ORDER = {"l": 0, "low": 0, "n": 1, "nominal": 1, "h": 2, "high": 2}
@@ -54,6 +58,35 @@ def detection_id(row):
     return f"{row.get('latitude')}_{row.get('longitude')}_{row.get('acq_date')}_{row.get('acq_time')}"
 
 
+def cluster_fires(rows):
+    """Group detections within ~2 km into single fires."""
+    clusters = []
+    for r in rows:
+        try:
+            lat, lon = float(r["latitude"]), float(r["longitude"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        placed = False
+        for c in clusters:
+            if abs(lat - c["lat"]) < CLUSTER_DEG and abs(lon - c["lon"]) < CLUSTER_DEG:
+                n = c["count"]
+                c["lat"] = (c["lat"] * n + lat) / (n + 1)
+                c["lon"] = (c["lon"] * n + lon) / (n + 1)
+                c["count"] = n + 1
+                key = f"{r.get('acq_date')} {r.get('acq_time')}"
+                if key > c["last_seen"]:
+                    c["last_seen"] = key
+                placed = True
+                break
+        if not placed:
+            clusters.append({
+                "lat": lat, "lon": lon, "count": 1,
+                "last_seen": f"{r.get('acq_date')} {r.get('acq_time')}",
+                "conf": r.get("confidence", "?"),
+            })
+    return clusters
+
+
 def load_seen():
     if os.path.exists(SEEN_FILE):
         with open(SEEN_FILE) as f:
@@ -71,23 +104,23 @@ def send_telegram(message):
     resp = requests.post(url, data={
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "disable_web_page_view": False,
         "disable_web_page_preview": True,
     }, timeout=30)
     resp.raise_for_status()
 
 
-def fmt(rows, title):
+def fmt_clusters(clusters, title):
+    clusters = sorted(clusters, key=lambda c: c["count"], reverse=True)
     lines = [title]
-    for r in rows[:10]:
-        lat, lon = r.get("latitude"), r.get("longitude")
+    for c in clusters[:MAX_ITEMS]:
+        size = f"{c['count']} detection(s)"
         lines.append(
-            f"• {r.get('acq_date')} {r.get('acq_time')} UTC — "
-            f"conf: {r.get('confidence')} ({r.get('satellite', '?')})\n"
-            f"  https://maps.google.com/?q={lat},{lon}"
+            f"• Fire near {c['lat']:.3f},{c['lon']:.3f} — {size}, "
+            f"last seen {c['last_seen']} UTC\n"
+            f"  https://maps.google.com/?q={c['lat']:.5f},{c['lon']:.5f}"
         )
-    if len(rows) > 10:
-        lines.append(f"...and {len(rows) - 10} more.")
+    if len(clusters) > MAX_ITEMS:
+        lines.append(f"...and {len(clusters) - MAX_ITEMS} more fires.")
     return "\n".join(lines)
 
 
@@ -113,22 +146,25 @@ def main():
     new_hits = [r for did, r in good.items() if did not in seen]
     seen.update(good.keys())
 
+    area = BBOX or COUNTRY
     if REPORT_MODE:
-        area = BBOX or COUNTRY
-        if good:
-            msg = fmt(list(good.values()),
-                      f"📋 Report: {len(good)} active hotspot(s) "
-                      f"in {area} (last 24h):")
+        clusters = cluster_fires(list(good.values()))
+        if clusters:
+            msg = fmt_clusters(
+                clusters,
+                f"📋 Report: {len(clusters)} active fire(s) "
+                f"({len(good)} detections) in {area}, last 24h:")
         else:
-            msg = (f"📋 Report: no hotspots detected in {area} "
-                   f"in the last 24h. ✅")
+            msg = f"📋 Report: no active fires detected in {area} in the last 24h. ✅"
         send_telegram(msg)
         print("Report sent.")
     elif new_hits:
-        send_telegram(fmt(new_hits,
-                          f"🔥 {len(new_hits)} new fire detection(s) "
-                          f"in {BBOX or COUNTRY}:"))
-        print(f"Alert sent: {len(new_hits)} new detections.")
+        clusters = cluster_fires(new_hits)
+        send_telegram(fmt_clusters(
+            clusters,
+            f"🔥 {len(clusters)} fire(s) with new activity "
+            f"({len(new_hits)} new detections) in {area}:"))
+        print(f"Alert sent: {len(clusters)} fires, {len(new_hits)} detections.")
     else:
         print("No new detections.")
 
