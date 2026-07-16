@@ -1,0 +1,41 @@
+name: Fire Alerts
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-fires:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run fire check
+        env:
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FIRE_COUNTRY: "GRC"
+          FIRE_MIN_CONFIDENCE: "nominal"
+        run: python fire_alerts_action.py
+
+      - name: Save seen detections
+        run: |
+          git config user.name "fire-alert-bot"
+          git config user.email "actions@github.com"
+          git add seen_fires.json || true
+          git diff --cached --quiet || git commit -m "Update seen fires [skip ci]"
+          git push
