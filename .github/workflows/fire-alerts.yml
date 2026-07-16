@@ -29,6 +29,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           FIRE_COUNTRY: "BGR"
+          FIRE_BBOX: "22.3,41.2,28.7,44.3"
           FIRE_MIN_CONFIDENCE: "nominal"
         run: python fire_alerts_action.py
 
