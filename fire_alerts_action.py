@@ -1,8 +1,9 @@
-"""NASA FIRMS Fire Alerts - multi-satellite, with fire clustering."""
+"""NASA FIRMS Fire Alerts - multi-satellite, clustering, Bulgaria border + 5km buffer."""
 
 import csv
 import io
 import json
+import math
 import os
 
 import requests
@@ -20,12 +21,74 @@ DAY_RANGE = 1
 MIN_CONFIDENCE = os.environ.get("FIRE_MIN_CONFIDENCE", "nominal")
 REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
 
-# Detections closer than ~2 km are treated as one fire
-CLUSTER_DEG = 0.02
+CLUSTER_DEG = 0.02    # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
+BUFFER_KM = 5.0       # keep fires up to this far outside the border outline
 
 SEEN_FILE = "seen_fires.json"
 CONF_ORDER = {"l": 0, "low": 0, "n": 1, "nominal": 1, "h": 2, "high": 2}
+
+# Simplified Bulgaria border polygon (lat, lon).
+FILTER_TO_POLYGON = True
+BG_POLYGON = [
+    (44.22, 22.68), (44.00, 23.00), (43.85, 23.60), (43.75, 24.50),
+    (43.72, 25.60), (43.95, 26.60), (44.12, 27.27), (43.75, 28.58),
+    (43.35, 28.47), (42.60, 27.65), (42.10, 27.90), (41.98, 28.03),
+    (41.72, 27.35), (41.71, 26.35), (41.32, 25.30), (41.24, 24.60),
+    (41.34, 23.63), (41.40, 23.33), (41.34, 22.94), (41.80, 22.87),
+    (42.32, 22.36), (42.85, 22.55), (43.20, 22.95), (43.65, 22.36),
+    (44.05, 22.40),
+]
+
+
+def point_in_polygon(lat, lon, polygon):
+    inside = False
+    n = len(polygon)
+    j = n - 1
+    for i in range(n):
+        lat_i, lon_i = polygon[i]
+        lat_j, lon_j = polygon[j]
+        if ((lon_i > lon) != (lon_j > lon)) and (
+            lat < (lat_j - lat_i) * (lon - lon_i) / (lon_j - lon_i) + lat_i
+        ):
+            inside = not inside
+        j = i
+    return inside
+
+
+def km_to_segment(lat, lon, p1, p2):
+    """Approximate distance in km from a point to a border segment."""
+    kx = 111.32 * math.cos(math.radians(lat))  # km per degree of longitude
+    ky = 110.57                                # km per degree of latitude
+    ax, ay = (p1[1] - lon) * kx, (p1[0] - lat) * ky
+    bx, by = (p2[1] - lon) * kx, (p2[0] - lat) * ky
+    dx, dy = bx - ax, by - ay
+    seg_len_sq = dx * dx + dy * dy
+    if seg_len_sq == 0:
+        return math.hypot(ax, ay)
+    t = max(0.0, min(1.0, -(ax * dx + ay * dy) / seg_len_sq))
+    cx, cy = ax + t * dx, ay + t * dy
+    return math.hypot(cx, cy)
+
+
+def near_border(lat, lon, polygon, max_km):
+    n = len(polygon)
+    for i in range(n):
+        if km_to_segment(lat, lon, polygon[i], polygon[(i + 1) % n]) <= max_km:
+            return True
+    return False
+
+
+def in_area(row):
+    if not FILTER_TO_POLYGON:
+        return True
+    try:
+        lat, lon = float(row["latitude"]), float(row["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if point_in_polygon(lat, lon, BG_POLYGON):
+        return True
+    return near_border(lat, lon, BG_POLYGON, BUFFER_KM)
 
 
 def fetch_hotspots(source):
@@ -59,7 +122,6 @@ def detection_id(row):
 
 
 def cluster_fires(rows):
-    """Group detections within ~2 km into single fires."""
     clusters = []
     for r in rows:
         try:
@@ -82,15 +144,18 @@ def cluster_fires(rows):
             clusters.append({
                 "lat": lat, "lon": lon, "count": 1,
                 "last_seen": f"{r.get('acq_date')} {r.get('acq_time')}",
-                "conf": r.get("confidence", "?"),
             })
     return clusters
 
 
 def load_seen():
     if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE) as f:
-            return set(json.load(f))
+        try:
+            with open(SEEN_FILE) as f:
+                return set(json.load(f))
+        except (json.JSONDecodeError, ValueError):
+            print("Warning: seen file was empty or corrupted, starting fresh.")
+            return set()
     return set()
 
 
@@ -113,10 +178,9 @@ def fmt_clusters(clusters, title):
     clusters = sorted(clusters, key=lambda c: c["count"], reverse=True)
     lines = [title]
     for c in clusters[:MAX_ITEMS]:
-        size = f"{c['count']} detection(s)"
         lines.append(
-            f"• Fire near {c['lat']:.3f},{c['lon']:.3f} — {size}, "
-            f"last seen {c['last_seen']} UTC\n"
+            f"• Fire near {c['lat']:.3f},{c['lon']:.3f} — "
+            f"{c['count']} detection(s), last seen {c['last_seen']} UTC\n"
             f"  https://maps.google.com/?q={c['lat']:.5f},{c['lon']:.5f}"
         )
     if len(clusters) > MAX_ITEMS:
@@ -138,15 +202,22 @@ def main():
         raise RuntimeError("All satellite sources failed: " + "; ".join(errors))
 
     good = {}
+    skipped = 0
     for row in all_rows:
-        if confident_enough(row):
-            good[detection_id(row)] = row
+        if not confident_enough(row):
+            continue
+        if not in_area(row):
+            skipped += 1
+            continue
+        good[detection_id(row)] = row
+    if skipped:
+        print(f"Filtered out {skipped} detection(s) outside Bulgaria (+{BUFFER_KM} km buffer).")
 
     seen = load_seen()
     new_hits = [r for did, r in good.items() if did not in seen]
     seen.update(good.keys())
 
-    area = BBOX or COUNTRY
+    area = "Bulgaria" if FILTER_TO_POLYGON else (BBOX or COUNTRY)
     if REPORT_MODE:
         clusters = cluster_fires(list(good.values()))
         if clusters:
