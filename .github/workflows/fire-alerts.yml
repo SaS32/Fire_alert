@@ -28,7 +28,7 @@ jobs:
           FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          FIRE_COUNTRY: "GRC"
+          FIRE_COUNTRY: "BGR"
           FIRE_MIN_CONFIDENCE: "nominal"
         run: python fire_alerts_action.py
 
