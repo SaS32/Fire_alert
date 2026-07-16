@@ -4,6 +4,14 @@ on:
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "check = alert on new fires only, report = full status of last 24h"
+        type: choice
+        default: check
+        options:
+          - check
+          - report
 
 permissions:
   contents: write
@@ -31,6 +39,7 @@ jobs:
           FIRE_COUNTRY: "BGR"
           FIRE_BBOX: "22.3,41.2,28.7,44.3"
           FIRE_MIN_CONFIDENCE: "nominal"
+          RUN_MODE: ${{ inputs.mode || 'check' }}
         run: python fire_alerts_action.py
 
       - name: Save seen detections
