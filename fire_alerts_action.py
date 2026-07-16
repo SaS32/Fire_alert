@@ -10,9 +10,9 @@ import os
 
 import requests
 
-FIRMS_MAP_KEY = os.environ["FIRMS_MAP_KEY"]
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+FIRMS_MAP_KEY = os.environ["FIRMS_MAP_KEY"].strip()
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
+TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
 
 COUNTRY = os.environ.get("FIRE_COUNTRY", "BGR")
 BBOX = os.environ.get("FIRE_BBOX") or None
