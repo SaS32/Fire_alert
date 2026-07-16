@@ -16,7 +16,7 @@ TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 COUNTRY = os.environ.get("FIRE_COUNTRY", "BGR")
 BBOX = os.environ.get("FIRE_BBOX") or None
-SOURCE = os.environ.get("FIRE_SOURCE", "VIIRS_SNPP_NRT")
+SOURCE = os.environ.get("FIRE_SOURCE", "VIIRS_NOAA20_NRT")
 DAY_RANGE = 1
 MIN_CONFIDENCE = os.environ.get("FIRE_MIN_CONFIDENCE", "nominal")
 
