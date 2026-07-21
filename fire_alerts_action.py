@@ -24,6 +24,7 @@ REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
 
 CLUSTER_DEG = 0.02        # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
+MAX_MAP_PINS = 5          # send at most this many map pictures per message
 BUFFER_KM = 5.0           # keep fires up to this far outside the border outline
 RETRY_DELAYS = [300, 600]  # wait 5 min, then 10 min, between fetch attempts
 
@@ -200,6 +201,26 @@ def send_telegram(message):
     resp.raise_for_status()
 
 
+def send_location(lat, lon):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendLocation"
+    resp = requests.post(url, data={
+        "chat_id": TELEGRAM_CHAT_ID,
+        "latitude": lat,
+        "longitude": lon,
+    }, timeout=30)
+    resp.raise_for_status()
+
+
+def send_map_pins(clusters):
+    """Send a map picture (Telegram location pin) for the biggest fires."""
+    clusters = sorted(clusters, key=lambda c: c["count"], reverse=True)
+    for c in clusters[:MAX_MAP_PINS]:
+        try:
+            send_location(c["lat"], c["lon"])
+        except Exception as e:
+            print(f"Could not send map pin for {c['lat']:.3f},{c['lon']:.3f}: {e}")
+
+
 def fmt_clusters(clusters, title):
     clusters = sorted(clusters, key=lambda c: c["count"], reverse=True)
     lines = [title]
@@ -260,6 +281,8 @@ def main():
         else:
             msg = f"📋 Report: no active fires detected in {area} in the last 24h. ✅"
         send_telegram(msg)
+        if clusters:
+            send_map_pins(clusters)
         print("Report sent.")
     elif new_hits:
         clusters = cluster_fires(new_hits)
@@ -267,6 +290,7 @@ def main():
             clusters,
             f"🔥 {len(clusters)} fire(s) with new activity "
             f"({len(new_hits)} new detections) in {area}:"))
+        send_map_pins(clusters)
         print(f"Alert sent: {len(clusters)} fires, {len(new_hits)} detections.")
     else:
         print("No new detections.")
