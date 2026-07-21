@@ -25,6 +25,7 @@ REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
 CLUSTER_DEG = 0.02        # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
 MAX_MAP_PINS = 5          # send at most this many map pictures per message
+MAP_HALF_SPAN_DEG = 0.02  # satellite image covers ~±2 km around the fire
 BUFFER_KM = 5.0           # keep fires up to this far outside the border outline
 RETRY_DELAYS = [300, 600]  # wait 5 min, then 10 min, between fetch attempts
 
@@ -211,14 +212,45 @@ def send_location(lat, lon):
     resp.raise_for_status()
 
 
+def send_satellite_photo(lat, lon, caption):
+    """Fetch a satellite image centered on the fire and post it to Telegram."""
+    d = MAP_HALF_SPAN_DEG
+    img_url = (
+        "https://server.arcgisonline.com/ArcGIS/rest/services/"
+        "World_Imagery/MapServer/export"
+        f"?bbox={lon - d},{lat - d},{lon + d},{lat + d}"
+        "&bboxSR=4326&imageSR=3857&size=600,600&format=jpg&f=image"
+    )
+    img = requests.get(img_url, timeout=60)
+    img.raise_for_status()
+    if not img.headers.get("Content-Type", "").startswith("image"):
+        raise RuntimeError(f"Imagery server did not return an image: {img.text[:200]}")
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    resp = requests.post(
+        url,
+        data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
+        files={"photo": ("map.jpg", img.content)},
+        timeout=60,
+    )
+    resp.raise_for_status()
+
+
 def send_map_pins(clusters):
-    """Send a map picture (Telegram location pin) for the biggest fires."""
+    """Send a satellite map picture for the biggest fires (pin as fallback)."""
     clusters = sorted(clusters, key=lambda c: c["count"], reverse=True)
     for c in clusters[:MAX_MAP_PINS]:
+        caption = (
+            f"🔥 Fire at image center — {c['lat']:.5f},{c['lon']:.5f} "
+            f"({c['count']} detection(s))"
+        )
         try:
-            send_location(c["lat"], c["lon"])
+            send_satellite_photo(c["lat"], c["lon"], caption)
         except Exception as e:
-            print(f"Could not send map pin for {c['lat']:.3f},{c['lon']:.3f}: {e}")
+            print(f"Satellite image failed for {c['lat']:.3f},{c['lon']:.3f}: {e}")
+            try:
+                send_location(c["lat"], c["lon"])
+            except Exception as e2:
+                print(f"Fallback map pin also failed: {e2}")
 
 
 def fmt_clusters(clusters, title):
