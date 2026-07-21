@@ -212,6 +212,35 @@ def send_location(lat, lon):
     resp.raise_for_status()
 
 
+def draw_fire_marker(jpeg_bytes):
+    """Draw a red marker (circle + crosshair) at the center of the image.
+
+    Returns the original bytes unchanged if Pillow is unavailable or drawing
+    fails, so the alert still goes out with an unmarked image.
+    """
+    try:
+        from PIL import Image, ImageDraw
+
+        img = Image.open(io.BytesIO(jpeg_bytes)).convert("RGB")
+        draw = ImageDraw.Draw(img)
+        cx, cy = img.width // 2, img.height // 2
+        r = 20
+        red = (255, 40, 40)
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=red, width=5)
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            draw.line(
+                [cx + dx * (r + 5), cy + dy * (r + 5),
+                 cx + dx * (r + 22), cy + dy * (r + 22)],
+                fill=red, width=5,
+            )
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=85)
+        return out.getvalue()
+    except Exception as e:
+        print(f"Could not draw marker on image: {e}")
+        return jpeg_bytes
+
+
 def send_satellite_photo(lat, lon, caption):
     """Fetch a satellite image centered on the fire and post it to Telegram."""
     d = MAP_HALF_SPAN_DEG
@@ -225,11 +254,12 @@ def send_satellite_photo(lat, lon, caption):
     img.raise_for_status()
     if not img.headers.get("Content-Type", "").startswith("image"):
         raise RuntimeError(f"Imagery server did not return an image: {img.text[:200]}")
+    photo = draw_fire_marker(img.content)
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     resp = requests.post(
         url,
         data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
-        files={"photo": ("map.jpg", img.content)},
+        files={"photo": ("map.jpg", photo)},
         timeout=60,
     )
     resp.raise_for_status()
