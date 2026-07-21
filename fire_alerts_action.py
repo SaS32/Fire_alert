@@ -255,10 +255,17 @@ def send_satellite_photo(lat, lon, caption):
     if not img.headers.get("Content-Type", "").startswith("image"):
         raise RuntimeError(f"Imagery server did not return an image: {img.text[:200]}")
     photo = draw_fire_marker(img.content)
+    keyboard = json.dumps({
+        "inline_keyboard": [[{
+            "text": "📍 Open map",
+            "url": f"https://maps.google.com/?q={lat:.5f},{lon:.5f}",
+        }]]
+    })
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     resp = requests.post(
         url,
-        data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption},
+        data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption,
+              "reply_markup": keyboard},
         files={"photo": ("map.jpg", photo)},
         timeout=60,
     )
