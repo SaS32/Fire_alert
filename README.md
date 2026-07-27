@@ -36,6 +36,7 @@ changing a couple of settings (see "Changing the monitored area" below).
 | `fire_alerts_action.py` | The main program. Runs once per invocation. |
 | `.github/workflows/fire-alerts.yml` | Tells GitHub to run the script hourly, and adds the manual "check/report" button. |
 | `seen_fires.json` | Memory of already-reported detections. Starts empty (`[]`). GitHub updates it automatically. |
+| `excluded_zones.json` | Places to ignore — hot factories, flares, landfills. Starts empty (`[]`). You edit this one by hand. |
 | `AI_CONTEXT.md` | Technical explanation for an AI assistant if you want help modifying the project later. |
 | `README.md` | This file. |
 
@@ -133,6 +134,42 @@ False` to rely on the rectangle alone. See `AI_CONTEXT.md` for details.
 
 ---
 
+## Ignoring known false positives
+
+Some places show up as "fires" every single day without ever burning — cement
+works, steel mills, refinery flares, power stations, big landfills. Satellites
+see hot, they report hot.
+
+To silence one, add it to `excluded_zones.json`:
+
+```json
+[
+  {"name": "Devnya cement works", "lat": 43.2237, "lon": 27.5619},
+  {"name": "Bobov dol power station", "lat": 42.2986, "lon": 22.9944, "radius_km": 1.5}
+]
+```
+
+- `lat` / `lon` — copy them straight out of the alert message or the Google Maps link.
+- `name` — for your own benefit; it appears in the run log, never in Telegram.
+- `radius_km` — optional, defaults to `0.2` (about 200 m).
+
+Detections inside the ring are dropped silently: no message, no photo, no
+mention in the report. The workflow log records how many were suppressed and
+where, so you can check it is behaving.
+
+Two things worth knowing:
+
+- **If the same factory keeps leaking through,** widen just that one with
+  `radius_km`. The satellites place a hotspot slightly differently on each pass
+  (MODIS pixels are about a kilometre across), so 200 m does not always cover a
+  large industrial site.
+- **A real fire inside the ring is also silenced.** That is the deal you are
+  making. Keep the rings small so a wildfire next door still reaches you.
+
+Changes take effect on the next hourly run — commit and push, nothing else.
+
+---
+
 ## Tuning knobs (top of `fire_alerts_action.py`)
 
 | Setting | Default | Meaning |
@@ -143,6 +180,7 @@ False` to rely on the rectangle alone. See `AI_CONTEXT.md` for details.
 | `MAX_MAP_PINS` | `5` | Max satellite photos sent per alert (biggest fires first). |
 | `MAP_HALF_SPAN_DEG` | `0.02` | Zoom of the satellite photo (~±2 km around the fire). Smaller = closer. |
 | `RETRY_DELAYS` | `[300, 600]` | Seconds to wait between retry attempts on NASA outages. |
+| `EXCLUDE_RADIUS_KM` | `0.2` | Default radius (~200 m) around an entry in `excluded_zones.json`. |
 | `FILTER_TO_POLYGON` | `True` | Whether to apply the border-shape filter at all. |
 | `MIN_CONFIDENCE` | `nominal` | Minimum detection confidence (via `FIRE_MIN_CONFIDENCE` env). |
 

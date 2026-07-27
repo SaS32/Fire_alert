@@ -77,14 +77,22 @@ Pipeline in `main()`:
    `km_to_segment()`, an equirectangular approximation adequate at this scale and
    latitude). This is what removes Turkish/Romanian fires while keeping border
    ones. Controlled by `FILTER_TO_POLYGON`.
-4. Dedup by `detection_id()` = lat_lon_date_time. Compare against `seen` loaded
+4. `excluded_zone_for()` — drop detections falling inside a user-defined circle
+   from `excluded_zones.json` (hot factories, flares, landfills). Default radius
+   `EXCLUDE_RADIUS_KM` = 0.2 km, overridable per zone. **Applied per detection,
+   before clustering, deliberately**: `CLUSTER_DEG` is ~2 km, so filtering by
+   cluster centroid instead would let a factory swallow a genuine fire up to
+   2 km away and suppress both. Suppression is silent in Telegram (explicit user
+   requirement — excluded zones must not appear in notifications, including
+   `report` mode) and logged to stdout only.
+5. Dedup by `detection_id()` = lat_lon_date_time. Compare against `seen` loaded
    from `seen_fires.json`; the difference is "new".
-5. `cluster_fires()` — greedy single-pass spatial clustering: a detection joins an
+6. `cluster_fires()` — greedy single-pass spatial clustering: a detection joins an
    existing cluster if within `CLUSTER_DEG` in both lat and lon, updating a running
    centroid; otherwise starts a new cluster. Not a true metric clusterer, so a fire
    front wider than ~2 * CLUSTER_DEG can split into adjacent clusters. Acceptable
    for alerting.
-6. Output: `report` mode summarizes all current fires (clustered); `check` mode
+7. Output: `report` mode summarizes all current fires (clustered); `check` mode
    messages only new activity. Both use `fmt_clusters()`, capped at `MAX_ITEMS`.
    After the text message, `send_map_pins()` sends a satellite image for the
    largest clusters, capped at `MAX_MAP_PINS`. The image comes from the free
@@ -101,16 +109,26 @@ Pipeline in `main()`:
    a URL button is the closest Telegram allows to a clickable map photo. If the imagery fetch fails it falls back to a plain Telegram
    `sendLocation` pin; all failures are logged but never block the alert
    (text already sent).
-7. `save_seen()` writes back the union, trimmed to the last 5000 ids to bound file
+8. `save_seen()` writes back the union, trimmed to the last 5000 ids to bound file
    growth.
 
-## State file
+## State files
 
 `seen_fires.json` is a JSON list of detection-id strings. `load_seen()` tolerates a
 missing, empty, or corrupted file (returns empty set) — this was added after the
 user emptied the file and hit a `JSONDecodeError`. Keep that resilience if you
 refactor. Clearing this file causes the next `check` run to treat all current
 fires as new (one-time re-alert).
+
+`excluded_zones.json` is a hand-maintained JSON list of
+`{"name", "lat", "lon", "radius_km"?}` objects. The script only ever reads it, so
+the workflow does not need to commit it. `load_excluded_zones()` fails *open* on
+purpose: a missing, unreadable, non-list, or malformed file yields zero zones, and
+individual bad entries are skipped rather than aborting the load. Reasoning — a
+config typo should cost the user some false-positive noise, never a suppressed
+real fire. Do not "harden" this into raising. Note that suppressed detections are
+dropped before entering `seen`, so deleting a zone re-alerts anything still in the
+FIRMS 24h window once.
 
 ## Common modification requests and how to approach them
 
@@ -124,6 +142,12 @@ fires as new (one-time re-alert).
 - **Quiet/dedup long-running fires:** `check` mode re-alerts each hour a fire
   produces new-timestamped detections. To throttle, track last-alert time per
   cluster location in the state file and suppress within a cooldown window.
+- **Recurring false positive (industrial hotspot):** append an entry to
+  `excluded_zones.json`; no code change. If one keeps leaking through, widen that
+  entry's `radius_km` rather than raising the global default — MODIS pixels are
+  ~1 km and the reported centroid drifts between passes. A considered but
+  unimplemented safety valve: a per-zone `max_frp` threshold letting genuinely
+  large fires (FIRMS `frp` column) alert despite the zone.
 - **Sensitivity:** lower `MIN_CONFIDENCE` to catch more (and more false positives);
   raise it to reduce noise. Adjust `CLUSTER_DEG` to change how aggressively nearby
   detections merge, and `BUFFER_KM` for how far outside the border to include.

@@ -30,6 +30,8 @@ BUFFER_KM = 5.0           # keep fires up to this far outside the border outline
 RETRY_DELAYS = [300, 600]  # wait 5 min, then 10 min, between fetch attempts
 
 SEEN_FILE = "seen_fires.json"
+ZONES_FILE = "excluded_zones.json"
+EXCLUDE_RADIUS_KM = 0.2   # default ring around a known false-positive source (~200 m)
 CONF_ORDER = {"l": 0, "low": 0, "n": 1, "nominal": 1, "h": 2, "high": 2}
 
 FILTER_TO_POLYGON = True
@@ -71,6 +73,59 @@ def km_to_segment(lat, lon, p1, p2):
     t = max(0.0, min(1.0, -(ax * dx + ay * dy) / seg_len_sq))
     cx, cy = ax + t * dx, ay + t * dy
     return math.hypot(cx, cy)
+
+
+def km_between(lat1, lon1, lat2, lon2):
+    kx = 111.32 * math.cos(math.radians((lat1 + lat2) / 2))
+    ky = 110.57
+    return math.hypot((lon2 - lon1) * kx, (lat2 - lat1) * ky)
+
+
+def load_excluded_zones():
+    """Load known false-positive spots (hot factories, flares, landfills).
+
+    Never raises. A missing, unreadable or malformed file means "no zones", so
+    a typo here can only cost noise — it can never silently suppress a real
+    fire. Bad individual entries are skipped one by one for the same reason.
+    """
+    if not os.path.exists(ZONES_FILE):
+        return []
+    try:
+        with open(ZONES_FILE) as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        print(f"Warning: could not read {ZONES_FILE} ({e}); excluding nothing.")
+        return []
+    if not isinstance(raw, list):
+        print(f"Warning: {ZONES_FILE} is not a list; excluding nothing.")
+        return []
+
+    zones = []
+    for i, entry in enumerate(raw, start=1):
+        try:
+            zones.append({
+                "name": str(entry.get("name") or f"zone {i}"),
+                "lat": float(entry["lat"]),
+                "lon": float(entry["lon"]),
+                "radius_km": float(entry.get("radius_km", EXCLUDE_RADIUS_KM)),
+            })
+        except (AttributeError, KeyError, TypeError, ValueError):
+            print(f"Warning: skipping malformed entry #{i} in {ZONES_FILE}.")
+    return zones
+
+
+def excluded_zone_for(row, zones):
+    """Return the name of the excluded zone containing this detection, else None."""
+    if not zones:
+        return None
+    try:
+        lat, lon = float(row["latitude"]), float(row["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    for z in zones:
+        if km_between(lat, lon, z["lat"], z["lon"]) <= z["radius_km"]:
+            return z["name"]
+    return None
 
 
 def near_border(lat, lon, polygon, max_km):
@@ -323,17 +378,28 @@ def main():
     if failed_sources:
         print(f"Note: continuing without: {', '.join(failed_sources)}")
 
+    zones = load_excluded_zones()
     good = {}
     skipped = 0
+    suppressed = {}
     for row in all_rows:
         if not confident_enough(row):
             continue
         if not in_area(row):
             skipped += 1
             continue
+        # Drop per detection, not per cluster: a real fire within CLUSTER_DEG of
+        # a factory would otherwise be swallowed by the same cluster and lost.
+        zone = excluded_zone_for(row, zones)
+        if zone:
+            suppressed[zone] = suppressed.get(zone, 0) + 1
+            continue
         good[detection_id(row)] = row
     if skipped:
         print(f"Filtered out {skipped} detection(s) outside Bulgaria (+{BUFFER_KM} km buffer).")
+    if suppressed:
+        detail = ", ".join(f"{name} ({n})" for name, n in sorted(suppressed.items()))
+        print(f"Suppressed {sum(suppressed.values())} detection(s) in excluded zones: {detail}")
 
     seen = load_seen()
     new_hits = [r for did, r in good.items() if did not in seen]
