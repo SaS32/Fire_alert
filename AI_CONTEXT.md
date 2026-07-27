@@ -12,11 +12,13 @@ pushes a Telegram message when new fires are detected in a target region
 (currently Bulgaria). It runs on GitHub Actions' free tier; there is no server and
 no database — persistence is a single JSON file committed back to the repo.
 
-The user is non-technical and operates entirely from an Android phone (GitHub via
-mobile browser, edits by paste). Optimize explanations and change instructions for
-that context: prefer full-file replacements over diffs/patches, because applying
-partial edits on mobile has repeatedly caused copy-paste corruption. Avoid
-assuming command-line, git CLI, or desktop access.
+The project is now maintained from a PC with a local clone, git CLI, and a shell
+available, so normal editing applies: targeted diffs/patches, running the script
+locally, and committing directly are all fine. (Earlier versions of this file
+required full-file replacements because the user worked only from an Android
+phone via the GitHub mobile browser — that constraint no longer applies.)
+Telegram remains the delivery channel and the phone is still the place alerts are
+read, but development happens on desktop.
 
 ## Runtime model
 

@@ -75,9 +75,6 @@ Everything below can be done from a phone browser.
      `/` characters makes the folders)
    - `README.md` and `AI_CONTEXT.md` are optional but recommended.
 
-   On mobile, use the browser (not the GitHub app): **Add file → Create new
-   file**, type the path, paste the content, **Commit changes**.
-
 ### 5. Add your three secrets
 
 In the repo: **Settings → Secrets and variables → Actions → New repository
