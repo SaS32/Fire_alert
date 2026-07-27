@@ -91,7 +91,9 @@ def load_excluded_zones():
     if not os.path.exists(ZONES_FILE):
         return []
     try:
-        with open(ZONES_FILE) as f:
+        # utf-8-sig: a Windows text editor may save this file with a BOM, and a
+        # BOM would otherwise make every zone silently vanish.
+        with open(ZONES_FILE, encoding="utf-8-sig") as f:
             raw = json.load(f)
     except (json.JSONDecodeError, ValueError, OSError) as e:
         print(f"Warning: could not read {ZONES_FILE} ({e}); excluding nothing.")
@@ -234,7 +236,7 @@ def cluster_fires(rows):
 def load_seen():
     if os.path.exists(SEEN_FILE):
         try:
-            with open(SEEN_FILE) as f:
+            with open(SEEN_FILE, encoding="utf-8-sig") as f:
                 return set(json.load(f))
         except (json.JSONDecodeError, ValueError):
             print("Warning: seen file was empty or corrupted, starting fresh.")

@@ -112,6 +112,22 @@ Pipeline in `main()`:
 8. `save_seen()` writes back the union, trimmed to the last 5000 ids to bound file
    growth.
 
+## `find_hotspots.py` (offline helper, not part of the hourly run)
+
+A standalone stdlib-only script the user runs by hand. It clusters
+`seen_fires.json` by proximity and ranks locations by the number of *distinct
+days* they appear on — the discriminator between a wildfire (1–2 days) and an
+industrial source (most days). Prints paste-ready `excluded_zones.json` entries
+with a radius derived from each location's observed scatter, plus a maps link.
+
+Deliberately read-only: it never edits `excluded_zones.json`. A zone suppresses
+real fires at that spot too, so a human must eyeball the imagery first. Don't
+"improve" this by adding an auto-append flag without the user asking.
+
+Note the feedback loop — once a zone is active those detections never reach
+`seen`, so a suppressed spot slowly disappears from this report. That is
+intended, but it means the report reflects what got through, not ground truth.
+
 ## State files
 
 `seen_fires.json` is a JSON list of detection-id strings. `load_seen()` tolerates a
@@ -161,6 +177,9 @@ FIRMS 24h window once.
   extra dependencies mean editing the workflow's install step and add failure
   surface for a non-technical maintainer.
 - No secrets in code, ever. They must stay in GitHub Actions secrets.
+- JSON files are opened with `encoding="utf-8-sig"`. The user now edits them on
+  Windows, where an editor may add a BOM; without this, `json.load` raises and
+  every exclusion zone silently disappears. Keep it.
 - The `.strip()` on the three secrets is deliberate — pasted secrets picked up
   trailing whitespace/newlines that caused 400s. Keep it.
 - Times from FIRMS are UTC; `acq_time` is HHMM without a colon (e.g. `0139`).

@@ -36,7 +36,8 @@ changing a couple of settings (see "Changing the monitored area" below).
 | `fire_alerts_action.py` | The main program. Runs once per invocation. |
 | `.github/workflows/fire-alerts.yml` | Tells GitHub to run the script hourly, and adds the manual "check/report" button. |
 | `seen_fires.json` | Memory of already-reported detections. Starts empty (`[]`). GitHub updates it automatically. |
-| `excluded_zones.json` | Places to ignore — hot factories, flares, landfills. Starts empty (`[]`). You edit this one by hand. |
+| `excluded_zones.json` | Places to ignore — hot factories, flares, landfills. You edit this one by hand. |
+| `find_hotspots.py` | Run it yourself to spot which locations keep repeating. Suggests zones; changes nothing. |
 | `AI_CONTEXT.md` | Technical explanation for an AI assistant if you want help modifying the project later. |
 | `README.md` | This file. |
 
@@ -167,6 +168,32 @@ Two things worth knowing:
   making. Keep the rings small so a wildfire next door still reaches you.
 
 Changes take effect on the next hourly run — commit and push, nothing else.
+
+### Finding them automatically
+
+You do not have to notice repeat offenders yourself. Every alert is logged in
+`seen_fires.json`, so the history can be searched for spots that keep coming
+back:
+
+```
+python find_hotspots.py
+```
+
+It groups nearby detections and reports any location seen on several separate
+days, with a Google Maps link and a ready-made line to paste into
+`excluded_zones.json`. Locations already covered by a zone are marked as such.
+It only reads — it never edits anything.
+
+A real wildfire appears for a day or two and is gone. Anything showing up on
+most days of the month is a machine, not a fire.
+
+```
+python find_hotspots.py --min-days 3     # catch weaker repeat offenders
+python find_hotspots.py --all            # show every location, one-offs too
+```
+
+Worth running every month or two. Once a zone is added its detections stop
+being recorded, so that spot gradually drops out of the report.
 
 ---
 
