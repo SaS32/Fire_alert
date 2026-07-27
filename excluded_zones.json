@@ -1,1 +1,6 @@
-[]
+[
+  {"name": "Pirdop smelter area - detected 11 of 12 days", "lat": 42.71532, "lon": 24.17070, "radius_km": 0.6},
+  {"name": "Vratsa area hotspot - detected 8 of 12 days", "lat": 43.28312, "lon": 23.46595, "radius_km": 0.5},
+  {"name": "Devnya industrial zone - detected 8 of 12 days", "lat": 43.23241, "lon": 27.59375, "radius_km": 0.5},
+  {"name": "Svilengrad border hotspot - detected 7 of 12 days", "lat": 41.79626, "lon": 26.70131, "radius_km": 0.35}
+]
