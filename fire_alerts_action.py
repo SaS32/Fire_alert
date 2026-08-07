@@ -24,7 +24,7 @@ REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
 
 CLUSTER_DEG = 0.02        # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
-MAX_MAP_PINS = 5          # send at most this many map pictures per message
+MAX_MAP_PINS = 10          # send at most this many map pictures per message
 MAP_HALF_SPAN_DEG = 0.02  # satellite image covers ~±2 km around the fire
 BUFFER_KM = 5.0           # keep fires up to this far outside the border outline
 RETRY_DELAYS = [300, 600]  # wait 5 min, then 10 min, between fetch attempts
