@@ -233,3 +233,10 @@ being recorded, so that spot gradually drops out of the report.
 
 Fire data © NASA FIRMS (Fire Information for Resource Management System),
 near-real-time MODIS and VIIRS active fire products. Free for public use.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE). Applies to this project's code only; NASA FIRMS
+data carries its own terms.
