@@ -14,6 +14,10 @@ fires too, so a human should look before one is added.
     python find_hotspots.py --min-days 3     # widen the net
     python find_hotspots.py --all            # list every location, once-off included
 
+Without a checkout, run the "Find Hotspots" GitHub Actions workflow instead — it
+runs this script monthly and on demand, and prints the report on the run summary
+page. The same three options are its workflow inputs.
+
 Note: once a zone is active its detections stop being recorded, so newly
 suppressed spots fade out of this report over the following weeks.
 """

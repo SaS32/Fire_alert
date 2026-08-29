@@ -35,9 +35,10 @@ changing a couple of settings (see "Changing the monitored area" below).
 |------|---------|
 | `fire_alerts_action.py` | The main program. Runs once per invocation. |
 | `.github/workflows/fire-alerts.yml` | Tells GitHub to run the script hourly, and adds the manual "check/report" button. |
+| `.github/workflows/find-hotspots.yml` | Runs `find_hotspots.py` on GitHub, monthly and on demand, so you can read the report from your phone. |
 | `seen_fires.json` | Memory of already-reported detections. Starts empty (`[]`). GitHub updates it automatically. |
 | `excluded_zones.json` | Places to ignore — hot factories, flares, landfills. You edit this one by hand. |
-| `find_hotspots.py` | Run it yourself to spot which locations keep repeating. Suggests zones; changes nothing. |
+| `find_hotspots.py` | Spots which locations keep repeating. Run it from the Actions tab or on your own machine. Suggests zones; changes nothing. |
 | `AI_CONTEXT.md` | Technical explanation for an AI assistant if you want help modifying the project later. |
 | `README.md` | This file. |
 
@@ -75,6 +76,8 @@ Everything below can be done from a phone browser.
    - `seen_fires.json` (repo root)
    - `.github/workflows/fire-alerts.yml` (create this exact path — typing the
      `/` characters makes the folders)
+   - `find_hotspots.py` and `.github/workflows/find-hotspots.yml` (optional —
+     the false-positive finder described further down)
    - `README.md` and `AI_CONTEXT.md` are optional but recommended.
 
 ### 5. Add your three secrets
@@ -173,26 +176,38 @@ Changes take effect on the next hourly run — commit and push, nothing else.
 
 You do not have to notice repeat offenders yourself. Every alert is logged in
 `seen_fires.json`, so the history can be searched for spots that keep coming
-back:
-
-```
-python find_hotspots.py
-```
-
-It groups nearby detections and reports any location seen on several separate
-days, with a Google Maps link and a ready-made line to paste into
-`excluded_zones.json`. Locations already covered by a zone are marked as such.
-It only reads — it never edits anything.
+back. `find_hotspots.py` does that: it groups nearby detections and reports any
+location seen on several separate days, with a Google Maps link and a ready-made
+line to paste into `excluded_zones.json`. Locations already covered by a zone are
+marked as such. It only reads — it never edits anything.
 
 A real wildfire appears for a day or two and is gone. Anything showing up on
 most days of the month is a machine, not a fire.
 
+**From your phone (no setup):** Actions → **Find Hotspots** → **Run workflow**.
+When the run finishes, open it and the report is printed on the run's summary
+page — no scrolling through logs. It also runs by itself on the 1st of each
+month, so there is a fresh report waiting whenever you think to look.
+
+The **Run workflow** dropdown has three optional boxes:
+
+| Box | Default | What it does |
+|-----|---------|--------------|
+| Separate days a spot must recur | `4` | Lower it to `3` or `2` to catch weaker repeat offenders. |
+| How close counts as the same source | `0.5` | Kilometres. Raise it for a sprawling industrial site. |
+| List every location | off | Tick it to see one-day fires too — a long report. |
+
+The workflow needs no secrets and commits nothing.
+
+**From a computer,** the same thing without GitHub:
+
 ```
+python find_hotspots.py                  # normal use
 python find_hotspots.py --min-days 3     # catch weaker repeat offenders
 python find_hotspots.py --all            # show every location, one-offs too
 ```
 
-Worth running every month or two. Once a zone is added its detections stop
+Worth checking every month or two. Once a zone is added its detections stop
 being recorded, so that spot gradually drops out of the report.
 
 ---

@@ -31,6 +31,14 @@ read, but development happens on desktop.
 - Secrets (`FIRMS_MAP_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) are stored as
   GitHub Actions repository secrets and injected as environment variables. They are
   never in the code.
+- `.github/workflows/find-hotspots.yml` is a second, independent workflow that
+  runs `find_hotspots.py` — monthly (`cron: "17 6 1 * *"`) and on
+  `workflow_dispatch` with inputs `min_days`, `recur_km`, `show_all`. It requests
+  `permissions: contents: read`, takes no secrets, installs nothing (the script is
+  stdlib-only), and commits nothing. Its whole output is the report, tee'd to the
+  job log and re-printed into `$GITHUB_STEP_SUMMARY` so it is readable in the
+  GitHub mobile app. It exists because the alert workflow's state file is the only
+  record of what keeps repeating, and the user should not need a clone to read it.
 
 ## Configuration (environment variables set in the workflow)
 
@@ -112,11 +120,11 @@ Pipeline in `main()`:
 8. `save_seen()` writes back the union, trimmed to the last 5000 ids to bound file
    growth.
 
-## `find_hotspots.py` (offline helper, not part of the hourly run)
+## `find_hotspots.py` (analysis helper, not part of the hourly run)
 
-A standalone stdlib-only script the user runs by hand. It clusters
-`seen_fires.json` by proximity and ranks locations by the number of *distinct
-days* they appear on — the discriminator between a wildfire (1–2 days) and an
+A standalone stdlib-only script, run either by hand or via the **Find Hotspots**
+workflow. It clusters `seen_fires.json` by proximity and ranks locations by the
+number of *distinct days* they appear on — the discriminator between a wildfire (1–2 days) and an
 industrial source (most days). Prints paste-ready `excluded_zones.json` entries
 with a radius derived from each location's observed scatter, plus a maps link.
 
@@ -127,6 +135,17 @@ real fires at that spot too, so a human must eyeball the imagery first. Don't
 Note the feedback loop — once a zone is active those detections never reach
 `seen`, so a suppressed spot slowly disappears from this report. That is
 intended, but it means the report reflects what got through, not ground truth.
+
+The script exits non-zero (`sys.exit(msg)`) when `seen_fires.json` is missing,
+unparseable, or empty. In the workflow that shows as a failed run, deliberately —
+an empty state file means the alert side has stopped recording. The summary step
+carries `if: always()` so the reason is still published either way.
+
+Workflow inputs are passed to the run step as environment variables and expanded
+by bash, never interpolated into the script body with `${{ }}` — that form is a
+command-injection hole on `workflow_dispatch` string inputs. Keep it that way if
+you add an input. The summary is capped at 1000 lines (`--all` currently emits
+~2800); the full text stays in the job log.
 
 ## State files
 
@@ -159,7 +178,8 @@ FIRMS 24h window once.
   produces new-timestamped detections. To throttle, track last-alert time per
   cluster location in the state file and suppress within a cooldown window.
 - **Recurring false positive (industrial hotspot):** append an entry to
-  `excluded_zones.json`; no code change. If one keeps leaking through, widen that
+  `excluded_zones.json`; no code change. To find candidates, run the **Find
+  Hotspots** workflow (or `find_hotspots.py` locally). If one keeps leaking through, widen that
   entry's `radius_km` rather than raising the global default — MODIS pixels are
   ~1 km and the reported centroid drifts between passes. A considered but
   unimplemented safety valve: a per-zone `max_frp` threshold letting genuinely

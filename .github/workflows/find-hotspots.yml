@@ -1,0 +1,90 @@
+name: Find Hotspots
+
+# Runs find_hotspots.py and prints the report into the run summary, so repeat
+# offenders can be reviewed from the GitHub mobile app without a local clone.
+# Read-only: no secrets, no network, nothing committed back.
+
+on:
+  schedule:
+    # 06:17 UTC on the 1st of each month. Off the top of the hour on purpose —
+    # GitHub delays scheduled jobs most at :00.
+    - cron: "17 6 1 * *"
+  workflow_dispatch:
+    inputs:
+      min_days:
+        description: "Separate days a spot must recur before it is reported"
+        type: string
+        default: "4"
+      recur_km:
+        description: "How close counts as the same source, in km"
+        type: string
+        default: "0.5"
+      show_all:
+        description: "List every location, one-day fires included"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  find-hotspots:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # No pip install: find_hotspots.py is stdlib-only by design.
+
+      - name: Find recurring hotspots
+        id: run
+        shell: bash
+        # Inputs arrive as environment variables, never interpolated into the
+        # script body — a ${{ }} expansion inside run: is a command-injection hole.
+        env:
+          MIN_DAYS: ${{ inputs.min_days || '4' }}
+          RECUR_KM: ${{ inputs.recur_km || '0.5' }}
+          SHOW_ALL: ${{ inputs.show_all || false }}
+        run: |
+          set -o pipefail
+          args=(--min-days "$MIN_DAYS" --recur-km "$RECUR_KM")
+          if [ "$SHOW_ALL" = "true" ]; then
+            args+=(--all)
+          fi
+          echo "find_hotspots.py ${args[*]}" | tee command.txt
+          status=0
+          python find_hotspots.py "${args[@]}" 2>&1 | tee hotspots.txt || status=$?
+          exit $status
+
+      - name: Publish report to the run summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Recurring hotspot report"
+            echo
+            if [ -f command.txt ]; then
+              echo "\`python $(cat command.txt)\`"
+              echo
+            fi
+            if [ -s hotspots.txt ]; then
+              echo '```'
+              head -n 1000 hotspots.txt
+              echo '```'
+              lines=$(wc -l < hotspots.txt)
+              if [ "$lines" -gt 1000 ]; then
+                echo
+                echo "_Truncated at 1000 of $lines lines — full output is in the job log._"
+              fi
+            else
+              echo "The script produced no output. See the job log."
+            fi
+            echo
+            echo "Check any suggested zone on the map before adding it to"
+            echo "\`excluded_zones.json\` — a zone hides real fires there too."
+          } >> "$GITHUB_STEP_SUMMARY"
