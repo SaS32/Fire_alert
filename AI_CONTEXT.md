@@ -54,7 +54,12 @@ read, but development happens on desktop.
   `https://firms.modaps.eosdis.nasa.gov/api/data_availability/csv/<KEY>/all`
   before adding it.
 - `FIRE_MIN_CONFIDENCE` (default `nominal`): VIIRS uses low/nominal/high; MODIS
-  uses a 0–100 integer. `confident_enough()` handles both.
+  uses a 0–100 integer. `confident_enough()` translates between the two via
+  `CONF_PERCENT` (NASA's MODIS bands: low 0–29, nominal 30–79, high 80–100), so a
+  word threshold means the same thing to both families and a numeric one does
+  too. Before this, a word threshold fell through to a hardcoded 80 for MODIS,
+  which silently held MODIS to "high" while VIIRS ran at nominal. Don't
+  reintroduce a bare numeric default here.
 - `RUN_MODE` (`check` or `report`): set from the workflow's `inputs.mode`,
   defaulting to `check` for scheduled runs.
 - `FIRE_CENTER_NAME` / `FIRE_CENTER_LAT` / `FIRE_CENTER_LON` (default

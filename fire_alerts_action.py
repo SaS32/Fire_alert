@@ -62,6 +62,10 @@ SEEN_FILE = "seen_fires.json"
 ZONES_FILE = "excluded_zones.json"
 EXCLUDE_RADIUS_KM = 0.2   # default ring around a known false-positive source (~200 m)
 CONF_ORDER = {"l": 0, "low": 0, "n": 1, "nominal": 1, "h": 2, "high": 2}
+# The two satellite families report confidence on different scales: VIIRS uses
+# the words above, MODIS a 0-100 number. NASA's own MODIS bands are low 0-29,
+# nominal 30-79, high 80-100, so this is what a word threshold means to MODIS.
+CONF_PERCENT = {0: 0, 1: 30, 2: 80}
 
 FILTER_TO_POLYGON = True
 BG_POLYGON = [
@@ -272,15 +276,34 @@ def fetch_all_with_retries():
     return all_rows, pending, last_errors
 
 
+def min_confidence_percent():
+    """MIN_CONFIDENCE on the MODIS 0-100 scale, whether it is set as a word or a number."""
+    raw = str(MIN_CONFIDENCE).strip().lower()
+    if raw.isdigit():
+        return int(raw)
+    return CONF_PERCENT[CONF_ORDER.get(raw, 1)]
+
+
+def min_confidence_class():
+    """MIN_CONFIDENCE on the VIIRS low/nominal/high scale, as a rank 0-2."""
+    raw = str(MIN_CONFIDENCE).strip().lower()
+    if raw.isdigit():
+        pct = int(raw)
+        return 2 if pct >= CONF_PERCENT[2] else (1 if pct >= CONF_PERCENT[1] else 0)
+    return CONF_ORDER.get(raw, 1)
+
+
 def confident_enough(row):
+    """Compare a detection against MIN_CONFIDENCE on whichever scale it reports.
+
+    Previously a word threshold fell through to a hardcoded 80 for MODIS, so
+    MIN_CONFIDENCE="nominal" quietly held MODIS to "high" while VIIRS ran at
+    nominal - one of the four satellites was far stricter than configured.
+    """
     conf = str(row.get("confidence", "")).strip().lower()
     if conf.isdigit():
-        try:
-            return int(conf) >= int(MIN_CONFIDENCE)
-        except (ValueError, TypeError):
-            return int(conf) >= 80
-    needed = CONF_ORDER.get(str(MIN_CONFIDENCE).lower(), 1)
-    return CONF_ORDER.get(conf, 0) >= needed
+        return int(conf) >= min_confidence_percent()
+    return CONF_ORDER.get(conf, 0) >= min_confidence_class()
 
 
 def detection_id(row):

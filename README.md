@@ -262,7 +262,7 @@ being recorded, so that spot gradually drops out of the report.
 | `FILTER_TO_POLYGON` | `True` | Whether to apply the border-shape filter at all. |
 | `CENTER_LAT` / `CENTER_LON` | Sofia | Point that distances are measured from (via `FIRE_CENTER_LAT` / `FIRE_CENTER_LON`). |
 | `CENTER_NAME` | `Sofia` | Name used in the messages (via `FIRE_CENTER_NAME`). |
-| `MIN_CONFIDENCE` | `nominal` | Minimum detection confidence (via `FIRE_MIN_CONFIDENCE` env). |
+| `MIN_CONFIDENCE` | `nominal` | Minimum detection confidence (via `FIRE_MIN_CONFIDENCE` env). Accepts `low`/`nominal`/`high` or a 0–100 number; both scales are honoured. |
 
 ---
 
