@@ -44,6 +44,8 @@ jobs:
           FIRE_CENTER_NAME: "Sofia"
           FIRE_CENTER_LAT: "42.6977"
           FIRE_CENTER_LON: "23.3219"
+          # Alert times are shown in this zone, with UTC in brackets.
+          FIRE_TIMEZONE: "Europe/Sofia"
           RUN_MODE: ${{ inputs.mode || 'check' }}
         run: python fire_alerts_action.py
 

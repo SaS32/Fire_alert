@@ -7,6 +7,7 @@ import json
 import math
 import os
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -31,6 +32,10 @@ REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
 # (FIRE_CENTER_NAME / FIRE_CENTER_LAT / FIRE_CENTER_LON) - no code edit needed.
 CENTER = load_center()
 CENTER_NAME, CENTER_LAT, CENTER_LON = CENTER
+
+# Alerts are read in Bulgaria, so they show local time with UTC in brackets.
+# FIRMS always reports UTC; the UTC value is never dropped, only accompanied.
+LOCAL_TZ_NAME = os.environ.get("FIRE_TIMEZONE", "").strip() or "Europe/Sofia"
 
 CLUSTER_DEG = 0.02        # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
@@ -107,6 +112,49 @@ def by_distance(clusters):
         c["dist_km"] = great_circle_km(CENTER_LAT, CENTER_LON, c["lat"], c["lon"])
         c["direction"] = compass_from(CENTER_LAT, CENTER_LON, c["lat"], c["lon"])
     return sorted(clusters, key=lambda c: c["dist_km"])
+
+
+def load_local_zone():
+    """The display timezone, or None when the platform has no tz database.
+
+    Windows without the `tzdata` package raises here. An alert must still go
+    out, so this degrades to UTC-only rather than failing.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(LOCAL_TZ_NAME)
+    except Exception as e:
+        print(f"Warning: timezone {LOCAL_TZ_NAME!r} unavailable ({e}); showing UTC only.")
+        return None
+
+
+LOCAL_ZONE = load_local_zone()
+
+
+def stamp_of(row):
+    """Canonical 'YYYY-MM-DD HHMM' for a detection.
+
+    acq_time is zero-padded here because FIRMS strips leading zeros: 00:43
+    arrives as "43", and comparing that as a string would rank it above "1149".
+    """
+    return f"{row.get('acq_date')} {str(row.get('acq_time') or '').zfill(4)}"
+
+
+def fmt_seen(stamp):
+    """'2026-09-06 14:22 EEST (11:22 UTC)' from a canonical stamp.
+
+    Falls back to showing the raw value if it cannot be parsed - a cosmetic
+    helper must never be able to lose the alert.
+    """
+    try:
+        utc = datetime.strptime(stamp, "%Y-%m-%d %H%M").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return f"{stamp} UTC"
+    if LOCAL_ZONE is None:
+        return f"{utc:%Y-%m-%d %H:%M} UTC"
+    local = utc.astimezone(LOCAL_ZONE)
+    return f"{local:%Y-%m-%d %H:%M} {local:%Z} ({utc:%H:%M} UTC)"
 
 
 def row_frp(row):
@@ -314,7 +362,7 @@ def cluster_fires(rows):
                 c["lat"] = (c["lat"] * n + lat) / (n + 1)
                 c["lon"] = (c["lon"] * n + lon) / (n + 1)
                 c["count"] = n + 1
-                key = f"{r.get('acq_date')} {r.get('acq_time')}"
+                key = stamp_of(r)
                 if key > c["last_seen"]:
                     c["last_seen"] = key
                 frp = row_frp(r)
@@ -325,7 +373,7 @@ def cluster_fires(rows):
         if not placed:
             clusters.append({
                 "lat": lat, "lon": lon, "count": 1,
-                "last_seen": f"{r.get('acq_date')} {r.get('acq_time')}",
+                "last_seen": stamp_of(r),
                 # Summed over the cluster: total power this fire is radiating.
                 "frp": row_frp(r),
             })
@@ -458,7 +506,7 @@ def fmt_clusters(clusters, title):
     for c in clusters[:MAX_ITEMS]:
         lines.append(
             f"• Fire {describe_place(c)} ({c['lat']:.3f},{c['lon']:.3f}) — "
-            f"{c['count']} detection(s){fmt_size(c)}, last seen {c['last_seen']} UTC\n"
+            f"{c['count']} detection(s){fmt_size(c)}, last seen {fmt_seen(c['last_seen'])}\n"
             f"  https://maps.google.com/?q={c['lat']:.5f},{c['lon']:.5f}"
         )
     if len(clusters) > MAX_ITEMS:

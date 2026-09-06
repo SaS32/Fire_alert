@@ -263,7 +263,16 @@ FIRMS 24h window once.
   every exclusion zone silently disappears. Keep it.
 - The `.strip()` on the three secrets is deliberate — pasted secrets picked up
   trailing whitespace/newlines that caused 400s. Keep it.
-- Times from FIRMS are UTC; `acq_time` is HHMM without a colon (e.g. `0139`).
-  Messages label times UTC; don't silently reinterpret as local.
+- Times from FIRMS are UTC and `acq_time` is HHMM without a colon — but with
+  **leading zeros stripped**, so 00:43 arrives as `43`. `stamp_of()` zero-pads it
+  into a canonical `YYYY-MM-DD HHMM`; without that, `cluster_fires()` compared
+  `"930" > "1149"` as strings and a cluster could report an earlier time as its
+  latest. Never build a timestamp from `acq_time` without padding.
+- `fmt_seen()` renders that stamp as local time with UTC in brackets
+  (`14:22 EEST (11:22 UTC)`), zone from `FIRE_TIMEZONE`, default `Europe/Sofia`.
+  The UTC value is always kept — it is what FIRMS actually reported and what the
+  logs use. `zoneinfo` needs a tz database, which Linux runners have and bare
+  Windows does not, so `load_local_zone()` returns None there and the format
+  degrades to UTC-only rather than raising.
 - This is an awareness tool, not an emergency system. Don't add framing that
   implies guaranteed or real-time fire detection.

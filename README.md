@@ -118,8 +118,9 @@ That's it. From now on it runs by itself every hour.
   mobile app too.
 - **Reading an alert:** first a text message lists each fire — how far it is
   from your central point and in which direction ("34 km NE of Sofia"), its
-  coordinates, how many satellite detections it has (more = bigger/hotter), when
-  it was last seen (UTC), and a Google Maps link. Fires are listed **nearest
+  coordinates, how many satellite detections it has, how much power it is
+  radiating in megawatts (the real measure of size), and when it was last seen
+  in Bulgarian local time with UTC in brackets, plus a Google Maps link. Fires are listed **nearest
   first**, and the message's opening line names the closest one, so a phone
   notification preview already tells you whether anything is near you. Then, for
   the nearest fires, a satellite photo follows with a red marker on the fire and
@@ -278,6 +279,7 @@ being recorded, so that spot gradually drops out of the report.
 | `FILTER_TO_POLYGON` | `True` | Whether to apply the border-shape filter at all. |
 | `CENTER_LAT` / `CENTER_LON` | Sofia | Point that distances are measured from (via `FIRE_CENTER_LAT` / `FIRE_CENTER_LON`). |
 | `CENTER_NAME` | `Sofia` | Name used in the messages (via `FIRE_CENTER_NAME`). |
+| `LOCAL_TZ_NAME` | `Europe/Sofia` | Timezone alert times are shown in, UTC always in brackets (via `FIRE_TIMEZONE`). |
 | `MIN_CONFIDENCE` | `nominal` | Minimum detection confidence (via `FIRE_MIN_CONFIDENCE` env). Accepts `low`/`nominal`/`high` or a 0–100 number; both scales are honoured. |
 
 ---
