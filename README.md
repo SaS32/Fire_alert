@@ -23,7 +23,7 @@ changing a couple of settings (see "Changing the monitored area" below).
   first thing you read.
 - Remembers what it already told you, so you only get alerted about **new** fire
   activity — not the same fire every hour.
-- With each alert it also sends a **satellite photo** of each fire (up to 5),
+- With each alert it also sends a **satellite photo** of each fire (up to 10),
   with a red marker on the exact spot and a **📍 Open map** button underneath —
   so you can immediately see whether the fire is in forest, farmland, or a town.
 - On request ("report" mode), sends a full snapshot of all fires in the last 24h.
@@ -255,7 +255,7 @@ being recorded, so that spot gradually drops out of the report.
 | `CLUSTER_DEG` | `0.02` | How close (in degrees, ~2 km) detections merge into one fire. |
 | `BUFFER_KM` | `5.0` | How far outside the border a fire is still reported. |
 | `MAX_ITEMS` | `35` | Max fires listed per Telegram message. |
-| `MAX_MAP_PINS` | `5` | Max satellite photos sent per alert (nearest fires first). |
+| `MAX_MAP_PINS` | `10` | Max satellite photos sent per alert (nearest fires first). |
 | `MAP_HALF_SPAN_DEG` | `0.02` | Zoom of the satellite photo (~±2 km around the fire). Smaller = closer. |
 | `RETRY_DELAYS` | `[300, 600]` | Seconds to wait between retry attempts on NASA outages. |
 | `EXCLUDE_RADIUS_KM` | `0.2` | Default radius (~200 m) around an entry in `excluded_zones.json`. |
