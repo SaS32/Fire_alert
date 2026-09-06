@@ -83,6 +83,20 @@ read, but development happens on desktop.
 - Rate limit: ~5000 transactions / 10 minutes per key. This project uses a handful
   per run, so it's nowhere near the limit.
 
+## `geo.py` (shared helpers)
+
+Distance, bearing and the reference point live here so `fire_alerts_action.py`
+and `find_hotspots.py` agree on what "34 km NE of Sofia" means. Stdlib only and
+it reads no secrets — that matters, because `find_hotspots.py` must stay
+runnable without a NASA key, so it can never import `fire_alerts_action.py`
+(which raises on a missing `FIRMS_MAP_KEY` at import time). Put anything both
+scripts need here rather than duplicating it.
+
+`km_between()` (flat) and `great_circle_km()` (haversine) both exist on purpose:
+the flat one is used for the sub-kilometre zone and cluster checks where it is
+cheap and accurate enough, the haversine one for distance from the centre point,
+which can be hundreds of km.
+
 ## Program structure (`fire_alerts_action.py`)
 
 Pipeline in `main()`:

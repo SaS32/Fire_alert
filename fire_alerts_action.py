@@ -10,26 +10,8 @@ import time
 
 import requests
 
-
-def env_float(name, default, low, high):
-    """Read a numeric setting from the environment, falling back to the default.
-
-    Never raises: a missing, empty, non-numeric or out-of-range value is reported
-    and ignored. A typo in the workflow must not stop fire alerts going out.
-    """
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        print(f"Warning: {name}={raw!r} is not a number; using {default}.")
-        return default
-    if not low <= value <= high:
-        print(f"Warning: {name}={value} is outside {low}..{high}; using {default}.")
-        return default
-    return value
-
+from geo import (compass_from, env_float, fmt_distance, great_circle_km,
+                 km_between, load_center)
 
 FIRMS_MAP_KEY = os.environ["FIRMS_MAP_KEY"].strip()
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
@@ -47,9 +29,8 @@ REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
 # Reference point every fire is measured from. Fires are listed nearest first
 # and each line says how far away it is. Change it in the workflow's env: block
 # (FIRE_CENTER_NAME / FIRE_CENTER_LAT / FIRE_CENTER_LON) - no code edit needed.
-CENTER_NAME = os.environ.get("FIRE_CENTER_NAME", "").strip() or "Sofia"
-CENTER_LAT = env_float("FIRE_CENTER_LAT", 42.6977, -90.0, 90.0)
-CENTER_LON = env_float("FIRE_CENTER_LON", 23.3219, -180.0, 180.0)
+CENTER = load_center()
+CENTER_NAME, CENTER_LAT, CENTER_LON = CENTER
 
 CLUSTER_DEG = 0.02        # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
@@ -108,50 +89,6 @@ def km_to_segment(lat, lon, p1, p2):
     return math.hypot(cx, cy)
 
 
-def km_between(lat1, lon1, lat2, lon2):
-    kx = 111.32 * math.cos(math.radians((lat1 + lat2) / 2))
-    ky = 110.57
-    return math.hypot((lon2 - lon1) * kx, (lat2 - lat1) * ky)
-
-
-def great_circle_km(lat1, lon1, lat2, lon2):
-    """Haversine distance in km.
-
-    Separate from km_between(), which flattens the earth: that is fine over the
-    few hundred metres of an excluded zone, but a fire can be 400 km from the
-    centre point and the flat approximation drifts at that range.
-    """
-    earth_r = 6371.0088
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp = p2 - p1
-    dl = math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * earth_r * math.asin(math.sqrt(a))
-
-
-COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-           "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
-
-
-def compass_from_center(lat, lon):
-    """Direction of a fire as seen from the centre point, to the nearest 22.5 deg."""
-    p1, p2 = math.radians(CENTER_LAT), math.radians(lat)
-    dl = math.radians(lon - CENTER_LON)
-    y = math.sin(dl) * math.cos(p2)
-    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
-    bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
-    return COMPASS[round(bearing / 22.5) % 16]
-
-
-def fmt_distance(km):
-    """Round sensibly: metres matter when it is close, not when it is 200 km away."""
-    if km < 1:
-        return f"{km * 1000:.0f} m"
-    if km < 10:
-        return f"{km:.1f} km"
-    return f"{km:.0f} km"
-
-
 def describe_place(cluster):
     """e.g. '34 km NE of Sofia'."""
     return (f"{fmt_distance(cluster['dist_km'])} "
@@ -162,7 +99,7 @@ def by_distance(clusters):
     """Measure every fire from the centre point and order them nearest first."""
     for c in clusters:
         c["dist_km"] = great_circle_km(CENTER_LAT, CENTER_LON, c["lat"], c["lon"])
-        c["direction"] = compass_from_center(c["lat"], c["lon"])
+        c["direction"] = compass_from(CENTER_LAT, CENTER_LON, c["lat"], c["lon"])
     return sorted(clusters, key=lambda c: c["dist_km"])
 
 

@@ -41,6 +41,7 @@ changing a couple of settings (see "Changing the monitored area" below).
 | `.github/workflows/find-hotspots.yml` | Runs `find_hotspots.py` on GitHub, monthly and on demand, so you can read the report from your phone. |
 | `seen_fires.json` | Memory of already-reported detections. Starts empty (`[]`). GitHub updates it automatically. |
 | `excluded_zones.json` | Places to ignore — hot factories, flares, landfills. You edit this one by hand. |
+| `geo.py` | Shared distance/direction helpers, plus the central point. Used by both scripts. |
 | `find_hotspots.py` | Spots which locations keep repeating. Run it from the Actions tab or on your own machine. Suggests zones; changes nothing. |
 | `AI_CONTEXT.md` | Technical explanation for an AI assistant if you want help modifying the project later. |
 | `README.md` | This file. |
@@ -213,8 +214,9 @@ Changes take effect on the next hourly run — commit and push, nothing else.
 You do not have to notice repeat offenders yourself. Every alert is logged in
 `seen_fires.json`, so the history can be searched for spots that keep coming
 back. `find_hotspots.py` does that: it groups nearby detections and reports any
-location seen on several separate days, with a Google Maps link and a ready-made
-line to paste into `excluded_zones.json`. Locations already covered by a zone are
+location seen on several separate days, with its distance from your central
+point, a Google Maps link and a ready-made line to paste into
+`excluded_zones.json`. Locations already covered by a zone are
 marked as such. It only reads — it never edits anything.
 
 A real wildfire appears for a day or two and is gone. Anything showing up on

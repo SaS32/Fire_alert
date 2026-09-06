@@ -24,9 +24,10 @@ suppressed spots fade out of this report over the following weeks.
 
 import argparse
 import json
-import math
 import os
 import sys
+
+from geo import describe_offset, km_between, load_center
 
 SEEN_FILE = "seen_fires.json"
 ZONES_FILE = "excluded_zones.json"
@@ -35,12 +36,6 @@ DEFAULT_RECUR_KM = 0.5   # detections this close are treated as one source
 DEFAULT_MIN_DAYS = 4     # distinct days before a location is worth reporting
 RADIUS_MARGIN = 1.35     # suggested radius = observed spread * this
 MIN_SUGGESTED_KM = 0.2   # never suggest a ring tighter than the script default
-
-
-def km_between(lat1, lon1, lat2, lon2):
-    kx = 111.32 * math.cos(math.radians((lat1 + lat2) / 2))
-    ky = 110.57
-    return math.hypot((lon2 - lon1) * kx, (lat2 - lat1) * ky)
 
 
 def load_detections(path):
@@ -128,10 +123,11 @@ def suggested_radius(spread_km):
     return max(MIN_SUGGESTED_KM, round(spread_km * RADIUS_MARGIN + 0.049, 1))
 
 
-def describe(g, total_days, zone):
+def describe(g, total_days, zone, center):
     days, hits = len(g["days"]), len(g["points"])
     mark = "already excluded" if zone else f"{days}/{total_days} days"
     print(f"\n  {g['lat']:.5f},{g['lon']:.5f}   {hits} detection(s), {mark}")
+    print(f"    {describe_offset(center, g['lat'], g['lon'])}")
     print(f"    scatter {g['spread_km'] * 1000:.0f} m   "
           f"seen {', '.join(sorted(d[5:] for d in g['days'])[:10])}"
           f"{' ...' if days > 10 else ''}")
@@ -157,6 +153,7 @@ def main():
     ap.add_argument("--zones", default=ZONES_FILE, help=f"default {ZONES_FILE}")
     args = ap.parse_args()
 
+    center = load_center()
     points = load_detections(args.seen)
     if not points:
         sys.exit("No detections recorded yet — nothing to analyse.")
@@ -167,6 +164,7 @@ def main():
     print(f"{len(points)} detections over {total_days} day(s): "
           f"{all_days[0]} to {all_days[-1]}")
     print(f"{len(zones)} exclusion zone(s) currently active")
+    print(f"Distances below are measured from {center[0]}.")
 
     groups = cluster(points, args.recur_km)
     threshold = 1 if args.all else args.min_days
@@ -181,7 +179,7 @@ def main():
             if reported == 0:
                 print(f"\n=== Recurring on {threshold}+ separate days "
                       "— likely industrial ===")
-            describe(g, total_days, zone)
+            describe(g, total_days, zone, center)
             reported += 1
         elif len(g["days"]) >= 2:
             watch += 1
