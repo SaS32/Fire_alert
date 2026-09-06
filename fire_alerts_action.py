@@ -89,6 +89,12 @@ def km_to_segment(lat, lon, p1, p2):
     return math.hypot(cx, cy)
 
 
+def fmt_size(cluster):
+    """', 45 MW' when the feed reported power, otherwise nothing."""
+    power = fmt_power(cluster.get("frp"))
+    return f", {power}" if power else ""
+
+
 def describe_place(cluster):
     """e.g. '34 km NE of Sofia'."""
     return (f"{fmt_distance(cluster['dist_km'])} "
@@ -101,6 +107,28 @@ def by_distance(clusters):
         c["dist_km"] = great_circle_km(CENTER_LAT, CENTER_LON, c["lat"], c["lon"])
         c["direction"] = compass_from(CENTER_LAT, CENTER_LON, c["lat"], c["lon"])
     return sorted(clusters, key=lambda c: c["dist_km"])
+
+
+def row_frp(row):
+    """Fire radiative power in MW, or None if the feed did not report it.
+
+    FIRMS gives this per detection; it is a far better measure of how big a fire
+    is than counting detections, which mostly reflects how many satellites
+    happened to look. Missing or unparseable values are None, never 0, so a
+    silent feed is never mistaken for a cold fire.
+    """
+    try:
+        value = float(str(row.get("frp", "")).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def fmt_power(mw):
+    """Format a fire radiative power total, or '' when nothing was reported."""
+    if not mw:
+        return ""
+    return f"{mw:.1f} MW" if mw < 10 else f"{mw:.0f} MW"
 
 
 def load_excluded_zones():
@@ -127,19 +155,28 @@ def load_excluded_zones():
     zones = []
     for i, entry in enumerate(raw, start=1):
         try:
+            max_frp = entry.get("max_frp")
             zones.append({
                 "name": str(entry.get("name") or f"zone {i}"),
                 "lat": float(entry["lat"]),
                 "lon": float(entry["lon"]),
                 "radius_km": float(entry.get("radius_km", EXCLUDE_RADIUS_KM)),
+                # Optional safety valve: a detection hotter than this is let
+                # through anyway, so a real wildfire at a factory still reaches
+                # you. Absent means the zone always suppresses, as before.
+                "max_frp": None if max_frp is None else float(max_frp),
             })
         except (AttributeError, KeyError, TypeError, ValueError):
             print(f"Warning: skipping malformed entry #{i} in {ZONES_FILE}.")
     return zones
 
 
-def excluded_zone_for(row, zones):
-    """Return the name of the excluded zone containing this detection, else None."""
+def zone_containing(row, zones):
+    """Return the excluded zone this detection falls inside, else None.
+
+    Whether that zone actually suppresses it is decided by the caller, because a
+    zone carrying a max_frp lets genuinely large fires through.
+    """
     if not zones:
         return None
     try:
@@ -148,7 +185,7 @@ def excluded_zone_for(row, zones):
         return None
     for z in zones:
         if km_between(lat, lon, z["lat"], z["lon"]) <= z["radius_km"]:
-            return z["name"]
+            return z
     return None
 
 
@@ -280,12 +317,17 @@ def cluster_fires(rows):
                 key = f"{r.get('acq_date')} {r.get('acq_time')}"
                 if key > c["last_seen"]:
                     c["last_seen"] = key
+                frp = row_frp(r)
+                if frp is not None:
+                    c["frp"] = (c["frp"] or 0.0) + frp
                 placed = True
                 break
         if not placed:
             clusters.append({
                 "lat": lat, "lon": lon, "count": 1,
                 "last_seen": f"{r.get('acq_date')} {r.get('acq_time')}",
+                # Summed over the cluster: total power this fire is radiating.
+                "frp": row_frp(r),
             })
     return clusters
 
@@ -398,7 +440,7 @@ def send_map_pins(clusters):
     for c in clusters[:MAX_MAP_PINS]:
         caption = (
             f"🔥 Fire at image center — {describe_place(c)}\n"
-            f"{c['lat']:.5f},{c['lon']:.5f} ({c['count']} detection(s))"
+            f"{c['lat']:.5f},{c['lon']:.5f} ({c['count']} detection(s){fmt_size(c)})"
         )
         try:
             send_satellite_photo(c["lat"], c["lon"], caption)
@@ -416,7 +458,7 @@ def fmt_clusters(clusters, title):
     for c in clusters[:MAX_ITEMS]:
         lines.append(
             f"• Fire {describe_place(c)} ({c['lat']:.3f},{c['lon']:.3f}) — "
-            f"{c['count']} detection(s), last seen {c['last_seen']} UTC\n"
+            f"{c['count']} detection(s){fmt_size(c)}, last seen {c['last_seen']} UTC\n"
             f"  https://maps.google.com/?q={c['lat']:.5f},{c['lon']:.5f}"
         )
     if len(clusters) > MAX_ITEMS:
@@ -447,6 +489,7 @@ def main():
     good = {}
     skipped = 0
     suppressed = {}
+    overridden = {}
     for row in all_rows:
         if not confident_enough(row):
             continue
@@ -455,16 +498,26 @@ def main():
             continue
         # Drop per detection, not per cluster: a real fire within CLUSTER_DEG of
         # a factory would otherwise be swallowed by the same cluster and lost.
-        zone = excluded_zone_for(row, zones)
+        zone = zone_containing(row, zones)
         if zone:
-            suppressed[zone] = suppressed.get(zone, 0) + 1
-            continue
+            frp = row_frp(row)
+            if zone["max_frp"] is not None and frp is not None and frp >= zone["max_frp"]:
+                # Hotter than this zone tolerates: a real fire at the factory,
+                # not the factory. Let it through.
+                overridden[zone["name"]] = max(overridden.get(zone["name"], 0.0), frp)
+            else:
+                suppressed[zone["name"]] = suppressed.get(zone["name"], 0) + 1
+                continue
         good[detection_id(row)] = row
     if skipped:
         print(f"Filtered out {skipped} detection(s) outside Bulgaria (+{BUFFER_KM} km buffer).")
     if suppressed:
         detail = ", ".join(f"{name} ({n})" for name, n in sorted(suppressed.items()))
         print(f"Suppressed {sum(suppressed.values())} detection(s) in excluded zones: {detail}")
+    if overridden:
+        detail = ", ".join(f"{name} (up to {fmt_power(mw)})"
+                           for name, mw in sorted(overridden.items()))
+        print(f"Reported despite an excluded zone, over its max_frp: {detail}")
 
     seen = load_seen()
     new_hits = [r for did, r in good.items() if did not in seen]

@@ -111,14 +111,21 @@ Pipeline in `main()`:
    `km_to_segment()`, an equirectangular approximation adequate at this scale and
    latitude). This is what removes Turkish/Romanian fires while keeping border
    ones. Controlled by `FILTER_TO_POLYGON`.
-4. `excluded_zone_for()` — drop detections falling inside a user-defined circle
+4. `zone_containing()` — find the user-defined circle a detection falls inside
    from `excluded_zones.json` (hot factories, flares, landfills). Default radius
    `EXCLUDE_RADIUS_KM` = 0.2 km, overridable per zone. **Applied per detection,
    before clustering, deliberately**: `CLUSTER_DEG` is ~2 km, so filtering by
    cluster centroid instead would let a factory swallow a genuine fire up to
    2 km away and suppress both. Suppression is silent in Telegram (explicit user
    requirement — excluded zones must not appear in notifications, including
-   `report` mode) and logged to stdout only.
+   `report` mode) and logged to stdout only. The suppression decision itself
+   lives in `main()`, not in `zone_containing()`, because a zone carrying an
+   optional `max_frp` lets a detection hotter than that through — the safety
+   valve this file used to list as considered-but-unimplemented. Without
+   `max_frp` a zone suppresses unconditionally, exactly as before.
+   `row_frp()` returns None rather than 0 for a missing value, so a feed that
+   omits the column can never be mistaken for a cold fire and can never trip the
+   valve.
 5. Dedup by `detection_id()` = lat_lon_date_time. Compare against `seen` loaded
    from `seen_fires.json`; the difference is "new". The id starts with the
    coordinates, so **never sort these strings directly to mean "by time"** — that

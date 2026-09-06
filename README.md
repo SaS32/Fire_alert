@@ -193,6 +193,9 @@ To silence one, add it to `excluded_zones.json`:
 - `lat` / `lon` — copy them straight out of the alert message or the Google Maps link.
 - `name` — for your own benefit; it appears in the run log, never in Telegram.
 - `radius_km` — optional, defaults to `0.2` (about 200 m).
+- `max_frp` — optional. A safety valve: a detection radiating more megawatts
+  than this is reported anyway. Leave it out and the zone stays absolutely
+  silent, as before.
 
 Detections inside the ring are dropped silently: no message, no photo, no
 mention in the report. The workflow log records how many were suppressed and
@@ -204,8 +207,19 @@ Two things worth knowing:
   `radius_km`. The satellites place a hotspot slightly differently on each pass
   (MODIS pixels are about a kilometre across), so 200 m does not always cover a
   large industrial site.
-- **A real fire inside the ring is also silenced.** That is the deal you are
-  making. Keep the rings small so a wildfire next door still reaches you.
+- **A real fire inside the ring is also silenced** — unless you give the zone a
+  `max_frp`. Keep the rings small so a wildfire next door still reaches you.
+
+If you want a factory silenced on ordinary days but not when it is genuinely
+ablaze, give it a `max_frp`:
+
+```json
+{"name": "Devnya cement works", "lat": 43.2237, "lon": 27.5619, "radius_km": 0.5, "max_frp": 150}
+```
+
+Watch the run log for a few weeks first to see what that site normally radiates,
+then set the ceiling comfortably above it. The log line reads "Reported despite
+an excluded zone, over its max_frp".
 
 Changes take effect on the next hourly run — commit and push, nothing else.
 
