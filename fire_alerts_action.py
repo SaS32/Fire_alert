@@ -7,7 +7,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -47,6 +47,13 @@ MAX_MAP_PINS = 10          # send at most this many map pictures per message
 MAP_HALF_SPAN_DEG = 0.02  # satellite image covers ~±2 km around the fire
 BUFFER_KM = 5.0           # keep fires up to this far outside the border outline
 RETRY_DELAYS = [300, 600]  # wait 5 min, then 10 min, between fetch attempts
+
+# A fire that burns for three days produces new detections on every satellite
+# pass, and without this it would be re-announced every hour for three days.
+COOLDOWN_FILE = "alert_cooldown.json"
+COOLDOWN_HOURS = 6.0        # stay quiet this long about a fire already reported
+NEAR_COOLDOWN_HOURS = 2.0   # ...but a fire within NEAR_KM is worth repeating sooner
+COOLDOWN_MATCH_KM = 3.0     # a fire this close to a remembered one is the same fire
 
 SEEN_FILE = "seen_fires.json"
 ZONES_FILE = "excluded_zones.json"
@@ -413,6 +420,77 @@ def save_seen(seen):
         json.dump(sorted(seen, key=acquired_at)[-5000:], f)
 
 
+def load_cooldown():
+    """When each already-reported fire was last announced.
+
+    Fails open, like load_excluded_zones(): a missing, unreadable or malformed
+    file means no cooldowns at all. The worst that can do is repeat an alert;
+    it can never swallow one.
+    """
+    if not os.path.exists(COOLDOWN_FILE):
+        return []
+    try:
+        with open(COOLDOWN_FILE, encoding="utf-8-sig") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        print(f"Warning: could not read {COOLDOWN_FILE} ({e}); no cooldowns applied.")
+        return []
+    if not isinstance(raw, list):
+        print(f"Warning: {COOLDOWN_FILE} is not a list; no cooldowns applied.")
+        return []
+
+    entries = []
+    for item in raw:
+        try:
+            entries.append({
+                "lat": float(item["lat"]),
+                "lon": float(item["lon"]),
+                "last_alert": datetime.strptime(
+                    item["last_alert"], "%Y-%m-%dT%H:%M:%SZ"
+                ).replace(tzinfo=timezone.utc),
+            })
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    return entries
+
+
+def save_cooldown(entries):
+    with open(COOLDOWN_FILE, "w") as f:
+        json.dump([{"lat": round(e["lat"], 5), "lon": round(e["lon"], 5),
+                    "last_alert": e["last_alert"].strftime("%Y-%m-%dT%H:%M:%SZ")}
+                   for e in entries], f, indent=1)
+
+
+def cooldown_hours(cluster):
+    """A fire near home is worth repeating sooner than one across the country."""
+    return NEAR_COOLDOWN_HOURS if is_near(cluster) else COOLDOWN_HOURS
+
+
+def in_cooldown(cluster, entries, now):
+    """True if this fire was announced recently enough to stay quiet about."""
+    for e in entries:
+        if km_between(cluster["lat"], cluster["lon"],
+                      e["lat"], e["lon"]) <= COOLDOWN_MATCH_KM:
+            hours = (now - e["last_alert"]).total_seconds() / 3600.0
+            # A negative age means a clock skew or a hand-edited file. Treat it
+            # as expired and alert: this file must never be able to silence one.
+            if 0 <= hours < cooldown_hours(cluster):
+                return True
+    return False
+
+
+def remember_alerts(clusters, entries, now):
+    """Record that these fires were just announced, replacing nearby older entries."""
+    kept = [e for e in entries
+            if not any(km_between(c["lat"], c["lon"], e["lat"], e["lon"])
+                       <= COOLDOWN_MATCH_KM for c in clusters)]
+    kept.extend({"lat": c["lat"], "lon": c["lon"], "last_alert": now}
+                for c in clusters)
+    # Past the longest window an entry can never suppress anything again.
+    cutoff = now - timedelta(hours=max(COOLDOWN_HOURS, NEAR_COOLDOWN_HOURS))
+    return [e for e in kept if e["last_alert"] >= cutoff]
+
+
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     resp = requests.post(url, data={
@@ -616,14 +694,27 @@ def main():
         print("Report sent.")
     elif new_hits:
         clusters = by_distance(cluster_fires(new_hits))
-        send_telegram(fmt_clusters(clusters, fmt_title(
-            clusters,
-            f"{len(clusters)} fire(s) with new activity "
-            f"({len(new_hits)} new detections) in {area}",
-            "🔥")))
-        send_map_pins(clusters)
-        print(f"Alert sent: {len(clusters)} fires, {len(new_hits)} detections, "
-              f"nearest {describe_place(clusters[0])}.")
+        now = datetime.now(timezone.utc)
+        remembered = load_cooldown()
+        fresh = [c for c in clusters if not in_cooldown(c, remembered, now)]
+        held = len(clusters) - len(fresh)
+        if held:
+            print(f"Held back {held} fire(s) announced within their cooldown "
+                  f"({COOLDOWN_HOURS:g}h, {NEAR_COOLDOWN_HOURS:g}h within "
+                  f"{NEAR_KM:g} km of {CENTER_NAME}).")
+        if fresh:
+            detections = sum(c["count"] for c in fresh)
+            send_telegram(fmt_clusters(fresh, fmt_title(
+                fresh,
+                f"{len(fresh)} fire(s) with new activity "
+                f"({detections} new detections) in {area}",
+                "🔥")))
+            send_map_pins(fresh)
+            save_cooldown(remember_alerts(fresh, remembered, now))
+            print(f"Alert sent: {len(fresh)} fires, {detections} detections, "
+                  f"nearest {describe_place(fresh[0])}.")
+        else:
+            print("New detections, but every fire is still inside its cooldown.")
     else:
         print("No new detections.")
 

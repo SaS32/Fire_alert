@@ -153,7 +153,20 @@ Pipeline in `main()`:
    bullet from `•` to `🚨`. The reasoning is that Telegram's notification preview
    shows only the first line, so on the one day it matters that line must carry
    the alarming fact rather than a fire count. Ordinary days are unchanged.
-9. Output: `report` mode summarizes all current fires (clustered); `check` mode
+9. Cooldown (`check` mode only). A wildfire produces newly-timestamped
+   detections on every satellite pass, so step 5 keeps finding "new" activity
+   for as long as it burns and the alert repeated hourly for days.
+   `in_cooldown()` drops a cluster that sits within `COOLDOWN_MATCH_KM` (3 km) of
+   an entry in `alert_cooldown.json` younger than its window —
+   `NEAR_COOLDOWN_HOURS` (2h) if the fire is within `NEAR_KM`, else
+   `COOLDOWN_HOURS` (6h). `remember_alerts()` then records what was actually
+   sent and prunes anything past the longest window. Deliberately **not**
+   applied in `report` mode: that is an explicit request for current status.
+   Suppressed detections still enter `seen`, so they never queue up. Like the
+   other state files this one fails open — unreadable means no cooldowns, and
+   a negative age (clock skew, hand edit) counts as expired. It must never be
+   able to swallow an alert, only repeat one.
+10. Output: `report` mode summarizes all current fires (clustered); `check` mode
    messages only new activity. Both use `fmt_clusters()`, capped at `MAX_ITEMS`,
    listing nearest fire first; each line reads
    `Fire 34 km NE of Sofia (42.812,23.678) - N detection(s), last seen ... UTC`.
@@ -175,7 +188,7 @@ Pipeline in `main()`:
    a URL button is the closest Telegram allows to a clickable map photo. If the imagery fetch fails it falls back to a plain Telegram
    `sendLocation` pin; all failures are logged but never block the alert
    (text already sent).
-10. `save_seen()` writes back the union, trimmed to the 5000 most recently
+11. `save_seen()` writes back the union, trimmed to the 5000 most recently
    *acquired* ids (`acquired_at`) to bound file growth. It previously trimmed on
    the raw string sort, i.e. kept the northernmost ids and discarded the oldest
    — which would have re-alerted southern fires forever once the file passed the
@@ -216,6 +229,12 @@ user emptied the file and hit a `JSONDecodeError`. Keep that resilience if you
 refactor. Clearing this file causes the next `check` run to treat all current
 fires as new (one-time re-alert).
 
+`alert_cooldown.json` is a JSON list of `{"lat", "lon", "last_alert"}` with
+`last_alert` an ISO `YYYY-MM-DDTHH:MM:SSZ` UTC stamp. Written only when an alert
+actually goes out, committed by the workflow alongside `seen_fires.json`.
+Deleting it makes the next `check` run re-announce every currently burning fire
+once. It is bounded by the prune in `remember_alerts()`, not by a count cap.
+
 `excluded_zones.json` is a hand-maintained JSON list of
 `{"name", "lat", "lon", "radius_km"?}` objects. The script only ever reads it, so
 the workflow does not need to commit it. `load_excluded_zones()` fails *open* on
@@ -235,9 +254,8 @@ FIRMS 24h window once.
 - **Add a notification channel (e.g. ntfy.sh, Discord, email):** add a new sender
   function mirroring `send_telegram()` and call it wherever `send_telegram()` is
   called. Consider a small abstraction (list of senders) if adding several.
-- **Quiet/dedup long-running fires:** `check` mode re-alerts each hour a fire
-  produces new-timestamped detections. To throttle, track last-alert time per
-  cluster location in the state file and suppress within a cooldown window.
+- **Change how often a burning fire repeats:** `COOLDOWN_HOURS` /
+  `NEAR_COOLDOWN_HOURS`. Set both to 0 to go back to alerting on every pass.
 - **Recurring false positive (industrial hotspot):** append an entry to
   `excluded_zones.json`; no code change. To find candidates, run the **Find
   Hotspots** workflow (or `find_hotspots.py` locally). If one keeps leaking through, widen that

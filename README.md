@@ -24,7 +24,9 @@ changing a couple of settings (see "Changing the monitored area" below).
   with 🚨 and the distance in capitals, so you can tell from the notification
   preview alone whether it concerns you.
 - Remembers what it already told you, so you only get alerted about **new** fire
-  activity — not the same fire every hour.
+  activity — not the same fire every hour. A fire that burns for days is
+  re-announced at most every 6 hours (2 hours if it is close to you), instead of
+  on every satellite pass.
 - With each alert it also sends a **satellite photo** of each fire (up to 10),
   with a red marker on the exact spot and a **📍 Open map** button underneath —
   so you can immediately see whether the fire is in forest, farmland, or a town.
@@ -42,6 +44,7 @@ changing a couple of settings (see "Changing the monitored area" below).
 | `.github/workflows/fire-alerts.yml` | Tells GitHub to run the script hourly, and adds the manual "check/report" button. |
 | `.github/workflows/find-hotspots.yml` | Runs `find_hotspots.py` on GitHub, monthly and on demand, so you can read the report from your phone. |
 | `seen_fires.json` | Memory of already-reported detections. Starts empty (`[]`). GitHub updates it automatically. |
+| `alert_cooldown.json` | When each fire was last announced, so long-burning fires aren't repeated hourly. Also automatic. |
 | `excluded_zones.json` | Places to ignore — hot factories, flares, landfills. You edit this one by hand. |
 | `geo.py` | Shared distance/direction helpers, plus the central point. Used by both scripts. |
 | `find_hotspots.py` | Spots which locations keep repeating. Run it from the Actions tab or on your own machine. Suggests zones; changes nothing. |
@@ -117,7 +120,8 @@ That's it. From now on it runs by itself every hour.
   there's new fire activity.
 - **To get a full status on demand** (e.g. "is that fire still burning?"): Actions
   → Fire Alerts → Run workflow → choose **report**. This works from the GitHub
-  mobile app too.
+  mobile app too. **report** ignores the cooldown entirely — you asked, so it
+  shows everything currently burning.
 - **Reading an alert:** first a text message lists each fire — how far it is
   from your central point and in which direction ("34 km NE of Sofia"), its
   coordinates, how many satellite detections it has, how much power it is
@@ -273,6 +277,9 @@ being recorded, so that spot gradually drops out of the report.
 |---------|---------|---------|
 | `CLUSTER_DEG` | `0.02` | How close (in degrees, ~2 km) detections merge into one fire. |
 | `NEAR_KM` | `20.0` | Fires this close to the central point are escalated with 🚨. |
+| `COOLDOWN_HOURS` | `6.0` | Stay quiet this long about a fire already announced. |
+| `NEAR_COOLDOWN_HOURS` | `2.0` | Shorter window for fires within `NEAR_KM`. |
+| `COOLDOWN_MATCH_KM` | `3.0` | How close a fire must be to a remembered one to count as the same fire. |
 | `BUFFER_KM` | `5.0` | How far outside the border a fire is still reported. |
 | `MAX_ITEMS` | `35` | Max fires listed per Telegram message. |
 | `MAX_MAP_PINS` | `10` | Max satellite photos sent per alert (nearest fires first). |

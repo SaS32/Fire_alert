@@ -54,5 +54,6 @@ jobs:
           git config user.name "fire-alert-bot"
           git config user.email "actions@github.com"
           git add seen_fires.json || true
+          git add alert_cooldown.json || true
           git diff --cached --quiet || git commit -m "Update seen fires [skip ci]"
           git push
