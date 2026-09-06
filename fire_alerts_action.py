@@ -287,6 +287,22 @@ def detection_id(row):
     return f"{row.get('latitude')}_{row.get('longitude')}_{row.get('acq_date')}_{row.get('acq_time')}"
 
 
+def acquired_at(detection_id_str):
+    """Sort key ordering detection ids oldest first, by when they were acquired.
+
+    detection_id() puts the coordinates first, so sorting the raw strings orders
+    them by latitude. Trimming on that in save_seen() would discard the
+    southernmost detections rather than the oldest, and every fire in southern
+    Bulgaria would eventually be re-reported as new. Pull the date and time out
+    instead. FIRMS drops leading zeros from acq_time (00:43 arrives as "43"), so
+    it has to be zero-padded before it will compare correctly.
+    """
+    parts = detection_id_str.split("_")
+    if len(parts) != 4:
+        return ("", "")          # unrecognised id: treat as oldest, trim it first
+    return (parts[2], parts[3].zfill(4))
+
+
 def cluster_fires(rows):
     clusters = []
     for r in rows:
@@ -326,8 +342,11 @@ def load_seen():
 
 
 def save_seen(seen):
+    # Keep the most recent ids, not the northernmost ones - see acquired_at().
+    # The window only has to outlast the FIRMS query range (DAY_RANGE) for dedup
+    # to work; 5000 is several days of normal activity.
     with open(SEEN_FILE, "w") as f:
-        json.dump(sorted(seen)[-5000:], f)
+        json.dump(sorted(seen, key=acquired_at)[-5000:], f)
 
 
 def send_telegram(message):

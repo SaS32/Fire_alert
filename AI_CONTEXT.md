@@ -101,7 +101,10 @@ Pipeline in `main()`:
    requirement — excluded zones must not appear in notifications, including
    `report` mode) and logged to stdout only.
 5. Dedup by `detection_id()` = lat_lon_date_time. Compare against `seen` loaded
-   from `seen_fires.json`; the difference is "new".
+   from `seen_fires.json`; the difference is "new". The id starts with the
+   coordinates, so **never sort these strings directly to mean "by time"** — that
+   sorts by latitude. `acquired_at()` is the time sort key, and it zero-pads
+   `acq_time` because FIRMS strips leading zeros (00:43 arrives as `43`).
 6. `cluster_fires()` — greedy single-pass spatial clustering: a detection joins an
    existing cluster if within `CLUSTER_DEG` in both lat and lon, updating a running
    centroid; otherwise starts a new cluster. Not a true metric clusterer, so a fire
@@ -140,8 +143,11 @@ Pipeline in `main()`:
    a URL button is the closest Telegram allows to a clickable map photo. If the imagery fetch fails it falls back to a plain Telegram
    `sendLocation` pin; all failures are logged but never block the alert
    (text already sent).
-9. `save_seen()` writes back the union, trimmed to the last 5000 ids to bound file
-   growth.
+9. `save_seen()` writes back the union, trimmed to the 5000 most recently
+   *acquired* ids (`acquired_at`) to bound file growth. It previously trimmed on
+   the raw string sort, i.e. kept the northernmost ids and discarded the oldest
+   — which would have re-alerted southern fires forever once the file passed the
+   cap. The window only has to outlast `DAY_RANGE` for dedup to work.
 
 ## `find_hotspots.py` (analysis helper, not part of the hourly run)
 
