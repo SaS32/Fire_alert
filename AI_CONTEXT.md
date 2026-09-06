@@ -57,6 +57,13 @@ read, but development happens on desktop.
   uses a 0–100 integer. `confident_enough()` handles both.
 - `RUN_MODE` (`check` or `report`): set from the workflow's `inputs.mode`,
   defaulting to `check` for scheduled runs.
+- `FIRE_CENTER_NAME` / `FIRE_CENTER_LAT` / `FIRE_CENTER_LON` (default
+  `Sofia` / `42.6977` / `23.3219`): the reference point every fire is measured
+  from. Fires are reported as "<distance> <compass direction> of <name>" and
+  ordered nearest first. Read through `env_float()`, which fails *open* like
+  `load_excluded_zones()` — a missing, non-numeric or out-of-range value logs a
+  warning and falls back to the default rather than raising. Keep that: a
+  cosmetic setting must never be able to stop an alert.
 
 ## The FIRMS API (essentials)
 
@@ -100,10 +107,26 @@ Pipeline in `main()`:
    centroid; otherwise starts a new cluster. Not a true metric clusterer, so a fire
    front wider than ~2 * CLUSTER_DEG can split into adjacent clusters. Acceptable
    for alerting.
-7. Output: `report` mode summarizes all current fires (clustered); `check` mode
-   messages only new activity. Both use `fmt_clusters()`, capped at `MAX_ITEMS`.
-   After the text message, `send_map_pins()` sends a satellite image for the
-   largest clusters, capped at `MAX_MAP_PINS`. The image comes from the free
+7. `by_distance()` — annotates each cluster with `dist_km` (haversine, via
+   `great_circle_km()`) and `direction` (16-point compass, `compass_from_center()`)
+   relative to `CENTER_LAT`/`CENTER_LON`, then returns them sorted nearest first.
+   Must run *after* clustering, because the distance applies to the cluster
+   centroid, not to individual detections. `great_circle_km()` is deliberately
+   separate from `km_between()`: the latter's flat-earth approximation is fine
+   for the sub-kilometre excluded-zone checks but drifts over the few hundred km
+   a fire can be from the centre point. Everything downstream assumes the list is
+   already annotated and sorted — `fmt_clusters()` and `send_map_pins()` no
+   longer sort, so anything new that formats clusters must pass through
+   `by_distance()` first.
+8. Output: `report` mode summarizes all current fires (clustered); `check` mode
+   messages only new activity. Both use `fmt_clusters()`, capped at `MAX_ITEMS`,
+   listing nearest fire first; each line reads
+   `Fire 34 km NE of Sofia (42.812,23.678) - N detection(s), last seen ... UTC`.
+   The title line names the nearest fire, because Telegram's notification preview
+   only shows the first line. After the text message, `send_map_pins()` sends a
+   satellite image for the *nearest* clusters, capped at `MAX_MAP_PINS` — changed
+   from biggest-first so the photos line up with the top of the text list.
+   The image comes from the free
    keyless Esri World Imagery export endpoint (`server.arcgisonline.com`),
    covering ±`MAP_HALF_SPAN_DEG` around the fire, which sits at image center.
    The endpoint cannot draw a marker, so `draw_fire_marker()` draws a red
@@ -117,7 +140,7 @@ Pipeline in `main()`:
    a URL button is the closest Telegram allows to a clickable map photo. If the imagery fetch fails it falls back to a plain Telegram
    `sendLocation` pin; all failures are logged but never block the alert
    (text already sent).
-8. `save_seen()` writes back the union, trimmed to the last 5000 ids to bound file
+9. `save_seen()` writes back the union, trimmed to the last 5000 ids to bound file
    growth.
 
 ## `find_hotspots.py` (analysis helper, not part of the hourly run)
@@ -184,6 +207,12 @@ FIRMS 24h window once.
   ~1 km and the reported centroid drifts between passes. A considered but
   unimplemented safety valve: a per-zone `max_frp` threshold letting genuinely
   large fires (FIRMS `frp` column) alert despite the zone.
+- **Move the distance reference point:** edit `FIRE_CENTER_*` in the workflow's
+  `env:` block; no code change. Only cosmetic — it changes ordering and wording,
+  never which fires are reported (that is `BG_POLYGON` + `FIRE_BBOX`).
+- **Sort by something else (size, recency):** change the key in `by_distance()`
+  or sort after it. Note the user explicitly asked for nearest-first, so don't
+  revert it to the old biggest-first ordering without being asked.
 - **Sensitivity:** lower `MIN_CONFIDENCE` to catch more (and more false positives);
   raise it to reduce noise. Adjust `CLUSTER_DEG` to change how aggressively nearby
   detections merge, and `BUFFER_KM` for how far outside the border to include.

@@ -18,6 +18,9 @@ changing a couple of settings (see "Changing the monitored area" below).
   fires in Turkey / Romania / Greece are filtered out (border fires are kept).
 - Groups detections within ~2 km into a single "fire" so one wildfire isn't
   reported as a dozen separate points.
+- Measures every fire from a central point of your choosing (**Sofia** by
+  default) and lists them **nearest first**, so the fire closest to you is the
+  first thing you read.
 - Remembers what it already told you, so you only get alerted about **new** fire
   activity — not the same fire every hour.
 - With each alert it also sends a **satellite photo** of each fire (up to 5),
@@ -112,11 +115,15 @@ That's it. From now on it runs by itself every hour.
 - **To get a full status on demand** (e.g. "is that fire still burning?"): Actions
   → Fire Alerts → Run workflow → choose **report**. This works from the GitHub
   mobile app too.
-- **Reading an alert:** first a text message lists each fire — its approximate
-  location, how many satellite detections it has (more = bigger/hotter), when it
-  was last seen (UTC), and a Google Maps link. Then, for the biggest fires, a
-  satellite photo follows with a red marker on the fire and a **📍 Open map**
-  button. (Tapping the photo just zooms it; use the button to open the map.)
+- **Reading an alert:** first a text message lists each fire — how far it is
+  from your central point and in which direction ("34 km NE of Sofia"), its
+  coordinates, how many satellite detections it has (more = bigger/hotter), when
+  it was last seen (UTC), and a Google Maps link. Fires are listed **nearest
+  first**, and the message's opening line names the closest one, so a phone
+  notification preview already tells you whether anything is near you. Then, for
+  the nearest fires, a satellite photo follows with a red marker on the fire and
+  a **📍 Open map** button. (Tapping the photo just zooms it; use the
+  button to open the map.)
   The satellite imagery is archival — it shows what the terrain normally looks
   like, not the fire or smoke itself.
 
@@ -135,6 +142,35 @@ The precise border filtering is separate — it lives in `fire_alerts_action.py`
 `BG_POLYGON`. If you switch countries and want border-accurate filtering, either
 replace that polygon with the new country's outline or set `FILTER_TO_POLYGON =
 False` to rely on the rectangle alone. See `AI_CONTEXT.md` for details.
+
+---
+
+## Changing the central point
+
+Every fire is reported as a distance and direction from one reference point —
+by default the centre of **Sofia**. Fires are always listed from nearest to
+farthest, and the satellite photos follow the same order.
+
+To move it, open `.github/workflows/fire-alerts.yml` and edit these three lines
+in the `env:` block:
+
+```yaml
+          FIRE_CENTER_NAME: "Sofia"
+          FIRE_CENTER_LAT: "42.6977"
+          FIRE_CENTER_LON: "23.3219"
+```
+
+- `FIRE_CENTER_NAME` — whatever you want the alerts to call it ("home", "the
+  village", "Plovdiv"). It only affects the wording.
+- `FIRE_CENTER_LAT` / `FIRE_CENTER_LON` — decimal degrees. The easiest way to get
+  them: long-press the spot in Google Maps, and copy the two numbers it shows.
+
+Commit and push; the next hourly run uses the new point. A typo can't break the
+alerts — an unreadable value is reported in the run log and the previous default
+is used instead.
+
+Distances are straight-line ("as the crow flies"), not driving distance, and the
+direction is a compass bearing from your point to the fire.
 
 ---
 
@@ -219,11 +255,13 @@ being recorded, so that spot gradually drops out of the report.
 | `CLUSTER_DEG` | `0.02` | How close (in degrees, ~2 km) detections merge into one fire. |
 | `BUFFER_KM` | `5.0` | How far outside the border a fire is still reported. |
 | `MAX_ITEMS` | `35` | Max fires listed per Telegram message. |
-| `MAX_MAP_PINS` | `5` | Max satellite photos sent per alert (biggest fires first). |
+| `MAX_MAP_PINS` | `5` | Max satellite photos sent per alert (nearest fires first). |
 | `MAP_HALF_SPAN_DEG` | `0.02` | Zoom of the satellite photo (~±2 km around the fire). Smaller = closer. |
 | `RETRY_DELAYS` | `[300, 600]` | Seconds to wait between retry attempts on NASA outages. |
 | `EXCLUDE_RADIUS_KM` | `0.2` | Default radius (~200 m) around an entry in `excluded_zones.json`. |
 | `FILTER_TO_POLYGON` | `True` | Whether to apply the border-shape filter at all. |
+| `CENTER_LAT` / `CENTER_LON` | Sofia | Point that distances are measured from (via `FIRE_CENTER_LAT` / `FIRE_CENTER_LON`). |
+| `CENTER_NAME` | `Sofia` | Name used in the messages (via `FIRE_CENTER_NAME`). |
 | `MIN_CONFIDENCE` | `nominal` | Minimum detection confidence (via `FIRE_MIN_CONFIDENCE` env). |
 
 ---
@@ -241,6 +279,9 @@ being recorded, so that spot gradually drops out of the report.
   pauses, re-enable it with one tap in the Actions tab.
 - **Reignition:** if a fire goes out and restarts later, the new detections have
   new timestamps, so you'll be alerted again.
+- **Distances are approximate.** They are measured to the centre of a cluster of
+  satellite detections, and a satellite places a hotspot to within roughly a
+  kilometre. Treat "3 km away" as "a few kilometres away".
 
 ---
 

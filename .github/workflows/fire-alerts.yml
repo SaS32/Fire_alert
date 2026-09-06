@@ -39,6 +39,11 @@ jobs:
           FIRE_COUNTRY: "BGR"
           FIRE_BBOX: "22.3,41.2,28.7,44.3"
           FIRE_MIN_CONFIDENCE: "nominal"
+          # Distances in every alert are measured from here, nearest fire first.
+          # Change these three lines to move the reference point.
+          FIRE_CENTER_NAME: "Sofia"
+          FIRE_CENTER_LAT: "42.6977"
+          FIRE_CENTER_LON: "23.3219"
           RUN_MODE: ${{ inputs.mode || 'check' }}
         run: python fire_alerts_action.py
 

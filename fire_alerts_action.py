@@ -1,4 +1,5 @@
-"""NASA FIRMS Fire Alerts - multi-satellite, clustering, border buffer, retry + outage alert."""
+"""NASA FIRMS Fire Alerts - multi-satellite, clustering, border buffer,
+distance-from-centre ranking, retry + outage alert."""
 
 import csv
 import io
@@ -8,6 +9,27 @@ import os
 import time
 
 import requests
+
+
+def env_float(name, default, low, high):
+    """Read a numeric setting from the environment, falling back to the default.
+
+    Never raises: a missing, empty, non-numeric or out-of-range value is reported
+    and ignored. A typo in the workflow must not stop fire alerts going out.
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        print(f"Warning: {name}={raw!r} is not a number; using {default}.")
+        return default
+    if not low <= value <= high:
+        print(f"Warning: {name}={value} is outside {low}..{high}; using {default}.")
+        return default
+    return value
+
 
 FIRMS_MAP_KEY = os.environ["FIRMS_MAP_KEY"].strip()
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
@@ -21,6 +43,13 @@ SOURCES = os.environ.get(
 DAY_RANGE = 1
 MIN_CONFIDENCE = os.environ.get("FIRE_MIN_CONFIDENCE", "nominal")
 REPORT_MODE = os.environ.get("RUN_MODE", "check") == "report"
+
+# Reference point every fire is measured from. Fires are listed nearest first
+# and each line says how far away it is. Change it in the workflow's env: block
+# (FIRE_CENTER_NAME / FIRE_CENTER_LAT / FIRE_CENTER_LON) - no code edit needed.
+CENTER_NAME = os.environ.get("FIRE_CENTER_NAME", "").strip() or "Sofia"
+CENTER_LAT = env_float("FIRE_CENTER_LAT", 42.6977, -90.0, 90.0)
+CENTER_LON = env_float("FIRE_CENTER_LON", 23.3219, -180.0, 180.0)
 
 CLUSTER_DEG = 0.02        # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
@@ -79,6 +108,58 @@ def km_between(lat1, lon1, lat2, lon2):
     kx = 111.32 * math.cos(math.radians((lat1 + lat2) / 2))
     ky = 110.57
     return math.hypot((lon2 - lon1) * kx, (lat2 - lat1) * ky)
+
+
+def great_circle_km(lat1, lon1, lat2, lon2):
+    """Haversine distance in km.
+
+    Separate from km_between(), which flattens the earth: that is fine over the
+    few hundred metres of an excluded zone, but a fire can be 400 km from the
+    centre point and the flat approximation drifts at that range.
+    """
+    earth_r = 6371.0088
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * earth_r * math.asin(math.sqrt(a))
+
+
+COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+           "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+
+
+def compass_from_center(lat, lon):
+    """Direction of a fire as seen from the centre point, to the nearest 22.5 deg."""
+    p1, p2 = math.radians(CENTER_LAT), math.radians(lat)
+    dl = math.radians(lon - CENTER_LON)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    bearing = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+    return COMPASS[round(bearing / 22.5) % 16]
+
+
+def fmt_distance(km):
+    """Round sensibly: metres matter when it is close, not when it is 200 km away."""
+    if km < 1:
+        return f"{km * 1000:.0f} m"
+    if km < 10:
+        return f"{km:.1f} km"
+    return f"{km:.0f} km"
+
+
+def describe_place(cluster):
+    """e.g. '34 km NE of Sofia'."""
+    return (f"{fmt_distance(cluster['dist_km'])} "
+            f"{cluster['direction']} of {CENTER_NAME}")
+
+
+def by_distance(clusters):
+    """Measure every fire from the centre point and order them nearest first."""
+    for c in clusters:
+        c["dist_km"] = great_circle_km(CENTER_LAT, CENTER_LON, c["lat"], c["lon"])
+        c["direction"] = compass_from_center(c["lat"], c["lon"])
+    return sorted(clusters, key=lambda c: c["dist_km"])
 
 
 def load_excluded_zones():
@@ -330,12 +411,15 @@ def send_satellite_photo(lat, lon, caption):
 
 
 def send_map_pins(clusters):
-    """Send a satellite map picture for the biggest fires (pin as fallback)."""
-    clusters = sorted(clusters, key=lambda c: c["count"], reverse=True)
+    """Send a satellite map picture for the nearest fires (pin as fallback).
+
+    Takes the list already ordered by by_distance(), so the photos match the top
+    of the text message instead of following a separate biggest-first ranking.
+    """
     for c in clusters[:MAX_MAP_PINS]:
         caption = (
-            f"🔥 Fire at image center — {c['lat']:.5f},{c['lon']:.5f} "
-            f"({c['count']} detection(s))"
+            f"🔥 Fire at image center — {describe_place(c)}\n"
+            f"{c['lat']:.5f},{c['lon']:.5f} ({c['count']} detection(s))"
         )
         try:
             send_satellite_photo(c["lat"], c["lon"], caption)
@@ -348,16 +432,16 @@ def send_map_pins(clusters):
 
 
 def fmt_clusters(clusters, title):
-    clusters = sorted(clusters, key=lambda c: c["count"], reverse=True)
+    """Format an already-distance-sorted cluster list, nearest fire first."""
     lines = [title]
     for c in clusters[:MAX_ITEMS]:
         lines.append(
-            f"• Fire near {c['lat']:.3f},{c['lon']:.3f} — "
+            f"• Fire {describe_place(c)} ({c['lat']:.3f},{c['lon']:.3f}) — "
             f"{c['count']} detection(s), last seen {c['last_seen']} UTC\n"
             f"  https://maps.google.com/?q={c['lat']:.5f},{c['lon']:.5f}"
         )
     if len(clusters) > MAX_ITEMS:
-        lines.append(f"...and {len(clusters) - MAX_ITEMS} more fires.")
+        lines.append(f"...and {len(clusters) - MAX_ITEMS} more fires, further away.")
     return "\n".join(lines)
 
 
@@ -408,13 +492,17 @@ def main():
     seen.update(good.keys())
 
     area = "Bulgaria" if FILTER_TO_POLYGON else (BBOX or COUNTRY)
+    print(f"Distances measured from {CENTER_NAME} ({CENTER_LAT}, {CENTER_LON}).")
     if REPORT_MODE:
-        clusters = cluster_fires(list(good.values()))
+        clusters = by_distance(cluster_fires(list(good.values())))
         if clusters:
+            # The nearest fire goes in the first line: on a locked phone that
+            # is all Telegram shows.
             msg = fmt_clusters(
                 clusters,
                 f"📋 Report: {len(clusters)} active fire(s) "
-                f"({len(good)} detections) in {area}, last 24h:")
+                f"({len(good)} detections) in {area}, last 24h — "
+                f"nearest {describe_place(clusters[0])}:")
         else:
             msg = f"📋 Report: no active fires detected in {area} in the last 24h. ✅"
         send_telegram(msg)
@@ -422,13 +510,15 @@ def main():
             send_map_pins(clusters)
         print("Report sent.")
     elif new_hits:
-        clusters = cluster_fires(new_hits)
+        clusters = by_distance(cluster_fires(new_hits))
         send_telegram(fmt_clusters(
             clusters,
             f"🔥 {len(clusters)} fire(s) with new activity "
-            f"({len(new_hits)} new detections) in {area}:"))
+            f"({len(new_hits)} new detections) in {area} — "
+            f"nearest {describe_place(clusters[0])}:"))
         send_map_pins(clusters)
-        print(f"Alert sent: {len(clusters)} fires, {len(new_hits)} detections.")
+        print(f"Alert sent: {len(clusters)} fires, {len(new_hits)} detections, "
+              f"nearest {describe_place(clusters[0])}.")
     else:
         print("No new detections.")
 
