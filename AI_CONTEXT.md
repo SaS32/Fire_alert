@@ -147,7 +147,13 @@ Pipeline in `main()`:
    already annotated and sorted — `fmt_clusters()` and `send_map_pins()` no
    longer sort, so anything new that formats clusters must pass through
    `by_distance()` first.
-8. Output: `report` mode summarizes all current fires (clustered); `check` mode
+8. `fmt_title()` builds the first line for both modes, and `marker()` the
+   per-fire bullet. A cluster within `NEAR_KM` (20 km) of the centre is "near":
+   the title switches from the counts to `🚨 FIRE 8 KM NE OF SOFIA — ...` and the
+   bullet from `•` to `🚨`. The reasoning is that Telegram's notification preview
+   shows only the first line, so on the one day it matters that line must carry
+   the alarming fact rather than a fire count. Ordinary days are unchanged.
+9. Output: `report` mode summarizes all current fires (clustered); `check` mode
    messages only new activity. Both use `fmt_clusters()`, capped at `MAX_ITEMS`,
    listing nearest fire first; each line reads
    `Fire 34 km NE of Sofia (42.812,23.678) - N detection(s), last seen ... UTC`.
@@ -169,7 +175,7 @@ Pipeline in `main()`:
    a URL button is the closest Telegram allows to a clickable map photo. If the imagery fetch fails it falls back to a plain Telegram
    `sendLocation` pin; all failures are logged but never block the alert
    (text already sent).
-9. `save_seen()` writes back the union, trimmed to the 5000 most recently
+10. `save_seen()` writes back the union, trimmed to the 5000 most recently
    *acquired* ids (`acquired_at`) to bound file growth. It previously trimmed on
    the raw string sort, i.e. kept the northernmost ids and discarded the oldest
    — which would have re-alerted southern fires forever once the file passed the

@@ -20,7 +20,9 @@ changing a couple of settings (see "Changing the monitored area" below).
   reported as a dozen separate points.
 - Measures every fire from a central point of your choosing (**Sofia** by
   default) and lists them **nearest first**, so the fire closest to you is the
-  first thing you read.
+  first thing you read. Anything within 20 km is escalated: the message leads
+  with 🚨 and the distance in capitals, so you can tell from the notification
+  preview alone whether it concerns you.
 - Remembers what it already told you, so you only get alerted about **new** fire
   activity — not the same fire every hour.
 - With each alert it also sends a **satellite photo** of each fire (up to 10),
@@ -270,6 +272,7 @@ being recorded, so that spot gradually drops out of the report.
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `CLUSTER_DEG` | `0.02` | How close (in degrees, ~2 km) detections merge into one fire. |
+| `NEAR_KM` | `20.0` | Fires this close to the central point are escalated with 🚨. |
 | `BUFFER_KM` | `5.0` | How far outside the border a fire is still reported. |
 | `MAX_ITEMS` | `35` | Max fires listed per Telegram message. |
 | `MAX_MAP_PINS` | `10` | Max satellite photos sent per alert (nearest fires first). |

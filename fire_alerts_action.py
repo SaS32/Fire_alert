@@ -37,6 +37,10 @@ CENTER_NAME, CENTER_LAT, CENTER_LON = CENTER
 # FIRMS always reports UTC; the UTC value is never dropped, only accompanied.
 LOCAL_TZ_NAME = os.environ.get("FIRE_TIMEZONE", "").strip() or "Europe/Sofia"
 
+# A fire this close is the reason the whole system exists, so it is called out
+# separately rather than being one line among thirty.
+NEAR_KM = 20.0
+
 CLUSTER_DEG = 0.02        # detections closer than ~2 km count as one fire
 MAX_ITEMS = 35
 MAX_MAP_PINS = 10          # send at most this many map pictures per message
@@ -98,6 +102,16 @@ def fmt_size(cluster):
     """', 45 MW' when the feed reported power, otherwise nothing."""
     power = fmt_power(cluster.get("frp"))
     return f", {power}" if power else ""
+
+
+def is_near(cluster):
+    """Close enough to the centre point to deserve alarm rather than a bullet."""
+    return cluster["dist_km"] <= NEAR_KM
+
+
+def marker(cluster):
+    """🚨 for a fire near the centre point, • for the rest."""
+    return "🚨" if is_near(cluster) else "•"
 
 
 def describe_place(cluster):
@@ -500,12 +514,25 @@ def send_map_pins(clusters):
                 print(f"Fallback map pin also failed: {e2}")
 
 
+def fmt_title(clusters, summary, calm_icon):
+    """Build the first line, which is all a phone notification preview shows.
+
+    When something is burning close by, that goes first - ahead of the counts,
+    which are what matters on an ordinary day but not on this one.
+    """
+    nearest = clusters[0]
+    if is_near(nearest):
+        return f"🚨 FIRE {describe_place(nearest).upper()} — {summary}:"
+    return f"{calm_icon} {summary} — nearest {describe_place(nearest)}:"
+
+
 def fmt_clusters(clusters, title):
     """Format an already-distance-sorted cluster list, nearest fire first."""
     lines = [title]
     for c in clusters[:MAX_ITEMS]:
         lines.append(
-            f"• Fire {describe_place(c)} ({c['lat']:.3f},{c['lon']:.3f}) — "
+            f"{marker(c)} Fire {describe_place(c)} "
+            f"({c['lat']:.3f},{c['lon']:.3f}) — "
             f"{c['count']} detection(s){fmt_size(c)}, last seen {fmt_seen(c['last_seen'])}\n"
             f"  https://maps.google.com/?q={c['lat']:.5f},{c['lon']:.5f}"
         )
@@ -576,13 +603,11 @@ def main():
     if REPORT_MODE:
         clusters = by_distance(cluster_fires(list(good.values())))
         if clusters:
-            # The nearest fire goes in the first line: on a locked phone that
-            # is all Telegram shows.
-            msg = fmt_clusters(
+            msg = fmt_clusters(clusters, fmt_title(
                 clusters,
-                f"📋 Report: {len(clusters)} active fire(s) "
-                f"({len(good)} detections) in {area}, last 24h — "
-                f"nearest {describe_place(clusters[0])}:")
+                f"Report: {len(clusters)} active fire(s) "
+                f"({len(good)} detections) in {area}, last 24h",
+                "📋"))
         else:
             msg = f"📋 Report: no active fires detected in {area} in the last 24h. ✅"
         send_telegram(msg)
@@ -591,11 +616,11 @@ def main():
         print("Report sent.")
     elif new_hits:
         clusters = by_distance(cluster_fires(new_hits))
-        send_telegram(fmt_clusters(
+        send_telegram(fmt_clusters(clusters, fmt_title(
             clusters,
-            f"🔥 {len(clusters)} fire(s) with new activity "
-            f"({len(new_hits)} new detections) in {area} — "
-            f"nearest {describe_place(clusters[0])}:"))
+            f"{len(clusters)} fire(s) with new activity "
+            f"({len(new_hits)} new detections) in {area}",
+            "🔥")))
         send_map_pins(clusters)
         print(f"Alert sent: {len(clusters)} fires, {len(new_hits)} detections, "
               f"nearest {describe_place(clusters[0])}.")
