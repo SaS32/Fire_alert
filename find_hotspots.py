@@ -24,10 +24,10 @@ suppressed spots fade out of this report over the following weeks.
 
 import argparse
 import json
-import os
 import sys
 
-from geo import describe_offset, km_between, load_center
+from geo import (covering_zone, describe_offset, km_between, load_center,
+                 load_zones)
 
 SEEN_FILE = "seen_fires.json"
 ZONES_FILE = "excluded_zones.json"
@@ -58,40 +58,6 @@ def load_detections(path):
     if bad:
         print(f"(skipped {bad} unparseable id(s) in {path})")
     return points
-
-
-def load_zones(path):
-    """Load existing exclusion zones so already-handled spots can be marked."""
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8-sig") as f:
-            raw = json.load(f)
-    except (json.JSONDecodeError, ValueError):
-        print(f"Warning: {path} is not readable; treating every spot as unexcluded.\n")
-        return []
-    if not isinstance(raw, list):
-        return []
-
-    zones = []
-    for entry in raw:
-        try:
-            zones.append({
-                "name": str(entry.get("name") or "unnamed"),
-                "lat": float(entry["lat"]),
-                "lon": float(entry["lon"]),
-                "radius_km": float(entry.get("radius_km", MIN_SUGGESTED_KM)),
-            })
-        except (AttributeError, KeyError, TypeError, ValueError):
-            continue
-    return zones
-
-
-def covering_zone(lat, lon, zones):
-    for z in zones:
-        if km_between(lat, lon, z["lat"], z["lon"]) <= z["radius_km"]:
-            return z
-    return None
 
 
 def cluster(points, recur_km):
@@ -141,7 +107,7 @@ def describe(g, total_days, zone, center):
               f'"radius_km": {radius}}},')
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--min-days", type=int, default=DEFAULT_MIN_DAYS,
                     help=f"days a spot must recur to be reported (default {DEFAULT_MIN_DAYS})")
@@ -151,13 +117,13 @@ def main():
                     help="list every location, including one-day fires")
     ap.add_argument("--seen", default=SEEN_FILE, help=f"default {SEEN_FILE}")
     ap.add_argument("--zones", default=ZONES_FILE, help=f"default {ZONES_FILE}")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     center = load_center()
     points = load_detections(args.seen)
     if not points:
         sys.exit("No detections recorded yet — nothing to analyse.")
-    zones = load_zones(args.zones)
+    zones = load_zones(args.zones, MIN_SUGGESTED_KM)
 
     all_days = sorted({d for _, _, d in points})
     total_days = len(all_days)

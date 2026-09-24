@@ -1,13 +1,15 @@
-"""Shared geography helpers: distance, direction, and the reference point.
+"""Shared geography helpers: distance, direction, the reference point, and zones.
 
 Imported by both fire_alerts_action.py (to rank fires by how close they are) and
 find_hotspots.py (to place recurring hotspots), so that "34 km NE of Sofia"
-means the same thing in an alert and in a hotspot report.
+means the same thing in an alert and in a hotspot report, and an exclusion zone
+is parsed exactly once instead of twice with subtly different rules.
 
 Stdlib only, and it reads no secrets, so find_hotspots.py can import it without
 a NASA key in the environment.
 """
 
+import json
 import math
 import os
 
@@ -93,3 +95,67 @@ def describe_offset(center, lat, lon):
     name, clat, clon = center
     return (f"{fmt_distance(great_circle_km(clat, clon, lat, lon))} "
             f"{compass_from(clat, clon, lat, lon)} of {name}")
+
+
+def load_zones(path, default_radius_km=0.2):
+    """Load exclusion zones shared by the action and the hotspot finder.
+
+    Fails open, like every other state file in this project: a missing,
+    unreadable or malformed file means "no zones", so a typo can only cost
+    noise — it can never silently suppress a real fire. Bad individual entries
+    are skipped one by one for the same reason.
+
+    A zone can carry an optional max_frp: a detection hotter than that value is
+    let through anyway (a real wildfire at a factory, not the factory). If the
+    value is unreadable the zone degrades to a plain silent zone with a warning
+    rather than being dropped — dropping it would leak its factory's daily
+    detections back into the alerts.
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        # utf-8-sig: a Windows text editor may save this file with a BOM, and a
+        # BOM would otherwise make every zone silently vanish.
+        with open(path, encoding="utf-8-sig") as f:
+            raw = json.load(f)
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        print(f"Warning: could not read {path} ({e}); excluding nothing.")
+        return []
+    if not isinstance(raw, list):
+        print(f"Warning: {path} is not a list; excluding nothing.")
+        return []
+
+    zones = []
+    for i, entry in enumerate(raw, start=1):
+        try:
+            name = str(entry.get("name") or f"zone {i}")
+            lat = float(entry["lat"])
+            lon = float(entry["lon"])
+        except (AttributeError, KeyError, TypeError, ValueError):
+            print(f"Warning: skipping malformed entry #{i} in {path}.")
+            continue
+        try:
+            radius_km = float(entry.get("radius_km", default_radius_km))
+        except (TypeError, ValueError):
+            radius_km = default_radius_km
+        max_frp = None
+        raw_frp = entry.get("max_frp")
+        if raw_frp is not None:
+            try:
+                max_frp = float(raw_frp)
+                if max_frp < 0:
+                    max_frp = None
+            except (TypeError, ValueError):
+                print(f"Warning: entry #{i} ({name}) in {path} has an unreadable "
+                      "max_frp; the zone stays absolutely silent.")
+        zones.append({"name": name, "lat": lat, "lon": lon,
+                      "radius_km": radius_km, "max_frp": max_frp})
+    return zones
+
+
+def covering_zone(lat, lon, zones):
+    """Return the first exclusion zone containing the point, else None."""
+    for z in zones:
+        if km_between(lat, lon, z["lat"], z["lon"]) <= z["radius_km"]:
+            return z
+    return None

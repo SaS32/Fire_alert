@@ -1,6 +1,13 @@
 """NASA FIRMS Fire Alerts - multi-satellite, clustering, border buffer,
-distance-from-centre ranking, retry + outage alert."""
+distance-from-centre ranking, retry + outage alert.
 
+Runs once per invocation. Reads its secrets from the environment so they never
+appear in code or git history. Also runs fully offline against a saved FIRMS
+CSV (``--csv``) and can print instead of send (``--dry-run``) — see the
+``--help`` output for the local-run options.
+"""
+
+import argparse
 import csv
 import io
 import json
@@ -11,12 +18,35 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from geo import (compass_from, env_float, fmt_distance, great_circle_km,
-                 km_between, load_center)
+from geo import (compass_from, covering_zone, fmt_distance,
+                 great_circle_km, km_between, load_center, load_zones)
 
-FIRMS_MAP_KEY = os.environ["FIRMS_MAP_KEY"].strip()
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"].strip()
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"].strip()
+__version__ = "1.0.0"
+
+# A secret is read lazily, at the moment it is actually needed, so the module
+# can be imported (and even run offline with --csv + --dry-run) without any of
+# them — and the failure is a clear message instead of an import crash.
+def _required_env(name):
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise RuntimeError(
+            f"Missing required environment variable {name!r}. Set it in the "
+            "workflow's env: block, or in your shell before running locally."
+        )
+    return value
+
+
+def firms_map_key():
+    return _required_env("FIRMS_MAP_KEY")
+
+
+def telegram_bot_token():
+    return _required_env("TELEGRAM_BOT_TOKEN")
+
+
+def telegram_chat_id():
+    return _required_env("TELEGRAM_CHAT_ID")
+
 
 COUNTRY = os.environ.get("FIRE_COUNTRY", "BGR")
 BBOX = os.environ.get("FIRE_BBOX") or None
@@ -64,7 +94,13 @@ CONF_ORDER = {"l": 0, "low": 0, "n": 1, "nominal": 1, "h": 2, "high": 2}
 # nominal 30-79, high 80-100, so this is what a word threshold means to MODIS.
 CONF_PERCENT = {0: 0, 1: 30, 2: 80}
 
-FILTER_TO_POLYGON = True
+# Border-accurate filtering is a nice default, but it hard-codes Bulgaria into
+# the pipeline. Anyone pointing FIRE_COUNTRY / FIRE_BBOX at a different region
+# can switch it off from the workflow's env: block instead of editing code:
+#   FIRE_FILTER_POLYGON: "false"
+# Fails open (stays True) on any unrecognised value, like every other setting.
+FILTER_TO_POLYGON = os.environ.get("FIRE_FILTER_POLYGON", "true").strip().lower() \
+    not in ("0", "false", "no", "off")
 BG_POLYGON = [
     (44.22, 22.68), (44.00, 23.00), (43.85, 23.60), (43.75, 24.50),
     (43.72, 25.60), (43.95, 26.60), (44.12, 27.27), (43.75, 28.58),
@@ -203,41 +239,12 @@ def fmt_power(mw):
 def load_excluded_zones():
     """Load known false-positive spots (hot factories, flares, landfills).
 
-    Never raises. A missing, unreadable or malformed file means "no zones", so
-    a typo here can only cost noise — it can never silently suppress a real
-    fire. Bad individual entries are skipped one by one for the same reason.
+    Parsed by the shared loader in geo.py with the same fail-open rules:
+    a missing, unreadable or malformed file means "no zones", so a typo here
+    can only cost noise — it can never silently suppress a real fire. Bad
+    individual entries are skipped one by one for the same reason.
     """
-    if not os.path.exists(ZONES_FILE):
-        return []
-    try:
-        # utf-8-sig: a Windows text editor may save this file with a BOM, and a
-        # BOM would otherwise make every zone silently vanish.
-        with open(ZONES_FILE, encoding="utf-8-sig") as f:
-            raw = json.load(f)
-    except (json.JSONDecodeError, ValueError, OSError) as e:
-        print(f"Warning: could not read {ZONES_FILE} ({e}); excluding nothing.")
-        return []
-    if not isinstance(raw, list):
-        print(f"Warning: {ZONES_FILE} is not a list; excluding nothing.")
-        return []
-
-    zones = []
-    for i, entry in enumerate(raw, start=1):
-        try:
-            max_frp = entry.get("max_frp")
-            zones.append({
-                "name": str(entry.get("name") or f"zone {i}"),
-                "lat": float(entry["lat"]),
-                "lon": float(entry["lon"]),
-                "radius_km": float(entry.get("radius_km", EXCLUDE_RADIUS_KM)),
-                # Optional safety valve: a detection hotter than this is let
-                # through anyway, so a real wildfire at a factory still reaches
-                # you. Absent means the zone always suppresses, as before.
-                "max_frp": None if max_frp is None else float(max_frp),
-            })
-        except (AttributeError, KeyError, TypeError, ValueError):
-            print(f"Warning: skipping malformed entry #{i} in {ZONES_FILE}.")
-    return zones
+    return load_zones(ZONES_FILE, EXCLUDE_RADIUS_KM)
 
 
 def zone_containing(row, zones):
@@ -252,10 +259,7 @@ def zone_containing(row, zones):
         lat, lon = float(row["latitude"]), float(row["longitude"])
     except (KeyError, TypeError, ValueError):
         return None
-    for z in zones:
-        if km_between(lat, lon, z["lat"], z["lon"]) <= z["radius_km"]:
-            return z
-    return None
+    return covering_zone(lat, lon, zones)
 
 
 def near_border(lat, lon, polygon, max_km):
@@ -281,10 +285,10 @@ def in_area(row):
 def fetch_hotspots(source):
     if BBOX:
         url = (f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/"
-               f"{FIRMS_MAP_KEY}/{source}/{BBOX}/{DAY_RANGE}")
+               f"{firms_map_key()}/{source}/{BBOX}/{DAY_RANGE}")
     else:
         url = (f"https://firms.modaps.eosdis.nasa.gov/api/country/csv/"
-               f"{FIRMS_MAP_KEY}/{source}/{COUNTRY}/{DAY_RANGE}")
+               f"{firms_map_key()}/{source}/{COUNTRY}/{DAY_RANGE}")
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
     text = resp.text.strip()
@@ -416,7 +420,7 @@ def save_seen(seen):
     # Keep the most recent ids, not the northernmost ones - see acquired_at().
     # The window only has to outlast the FIRMS query range (DAY_RANGE) for dedup
     # to work; 5000 is several days of normal activity.
-    with open(SEEN_FILE, "w") as f:
+    with open(SEEN_FILE, "w", encoding="utf-8") as f:
         json.dump(sorted(seen, key=acquired_at)[-5000:], f)
 
 
@@ -455,7 +459,7 @@ def load_cooldown():
 
 
 def save_cooldown(entries):
-    with open(COOLDOWN_FILE, "w") as f:
+    with open(COOLDOWN_FILE, "w", encoding="utf-8") as f:
         json.dump([{"lat": round(e["lat"], 5), "lon": round(e["lon"], 5),
                     "last_alert": e["last_alert"].strftime("%Y-%m-%dT%H:%M:%SZ")}
                    for e in entries], f, indent=1)
@@ -491,24 +495,51 @@ def remember_alerts(clusters, entries, now):
     return [e for e in kept if e["last_alert"] >= cutoff]
 
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+def _checked(resp, what):
+    """Turn a Telegram HTTP response into a result, checking its ok: field.
+
+    Telegram returns HTTP 200 for many failures (unknown chat id, message
+    longer than 4096 characters, a bot that was blocked), with the actual
+    outcome in the JSON body's "ok" flag. Checking only the status code would
+    treat those as success — and save_seen() would then remember the fire as
+    announced without anyone ever seeing the alert.
+    """
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    if not data.get("ok"):
+        description = data.get("description") or "(no description)"
+        raise RuntimeError(f"Telegram rejected {what}: {description}")
+    return data
+
+
+def send_telegram(message, dry_run=False):
+    if dry_run:
+        print("[dry-run] Telegram message:\n" + message)
+        return
+    url = f"https://api.telegram.org/bot{telegram_bot_token()}/sendMessage"
     resp = requests.post(url, data={
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": telegram_chat_id(),
         "text": message,
         "disable_web_page_preview": True,
     }, timeout=30)
     resp.raise_for_status()
+    _checked(resp, "message")
 
 
-def send_location(lat, lon):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendLocation"
+def send_location(lat, lon, dry_run=False):
+    if dry_run:
+        print(f"[dry-run] Telegram location pin: {lat:.5f},{lon:.5f}")
+        return
+    url = f"https://api.telegram.org/bot{telegram_bot_token()}/sendLocation"
     resp = requests.post(url, data={
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": telegram_chat_id(),
         "latitude": lat,
         "longitude": lon,
     }, timeout=30)
     resp.raise_for_status()
+    _checked(resp, "location")
 
 
 def draw_fire_marker(jpeg_bytes):
@@ -540,8 +571,11 @@ def draw_fire_marker(jpeg_bytes):
         return jpeg_bytes
 
 
-def send_satellite_photo(lat, lon, caption):
+def send_satellite_photo(lat, lon, caption, dry_run=False):
     """Fetch a satellite image centered on the fire and post it to Telegram."""
+    if dry_run:
+        print(f"[dry-run] Satellite photo for {lat:.5f},{lon:.5f}: {caption}")
+        return
     d = MAP_HALF_SPAN_DEG
     img_url = (
         "https://server.arcgisonline.com/ArcGIS/rest/services/"
@@ -560,18 +594,19 @@ def send_satellite_photo(lat, lon, caption):
             "url": f"https://maps.google.com/?q={lat:.5f},{lon:.5f}",
         }]]
     })
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+    url = f"https://api.telegram.org/bot{telegram_bot_token()}/sendPhoto"
     resp = requests.post(
         url,
-        data={"chat_id": TELEGRAM_CHAT_ID, "caption": caption,
+        data={"chat_id": telegram_chat_id(), "caption": caption,
               "reply_markup": keyboard},
         files={"photo": ("map.jpg", photo)},
         timeout=60,
     )
     resp.raise_for_status()
+    _checked(resp, "photo")
 
 
-def send_map_pins(clusters):
+def send_map_pins(clusters, dry_run=False):
     """Send a satellite map picture for the nearest fires (pin as fallback).
 
     Takes the list already ordered by by_distance(), so the photos match the top
@@ -583,9 +618,11 @@ def send_map_pins(clusters):
             f"{c['lat']:.5f},{c['lon']:.5f} ({c['count']} detection(s){fmt_size(c)})"
         )
         try:
-            send_satellite_photo(c["lat"], c["lon"], caption)
+            send_satellite_photo(c["lat"], c["lon"], caption, dry_run=dry_run)
         except Exception as e:
             print(f"Satellite image failed for {c['lat']:.3f},{c['lon']:.3f}: {e}")
+            if dry_run:
+                continue
             try:
                 send_location(c["lat"], c["lon"])
             except Exception as e2:
@@ -619,8 +656,36 @@ def fmt_clusters(clusters, title):
     return "\n".join(lines)
 
 
-def main():
-    all_rows, failed_sources, errors = fetch_all_with_retries()
+def load_rows(args):
+    """Fetch from NASA, or read a saved FIRMS CSV when --csv is given."""
+    if args.csv:
+        with open(args.csv, encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        print(f"Loaded {len(rows)} detection(s) from {args.csv}")
+        return rows, [], {}
+    return fetch_all_with_retries()
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Check NASA FIRMS for active fires and alert on Telegram. "
+                    "Offline runs: --csv with a saved FIRMS CSV, --dry-run to "
+                    "print instead of send.")
+    ap.add_argument("--csv", metavar="FILE",
+                    help="run offline on a saved FIRMS csv (no NASA fetch, no key needed)")
+    ap.add_argument("--mode", choices=["check", "report"], default=None,
+                    help="override RUN_MODE: check = alert on new fires only, "
+                         "report = full status of last 24h")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print the message instead of sending it to Telegram")
+    ap.add_argument("--version", action="version",
+                    version=f"%(prog)s {__version__}")
+    args = ap.parse_args(argv)
+
+    report_mode = (args.mode == "report") if args.mode else REPORT_MODE
+    dry_run = args.dry_run
+
+    all_rows, failed_sources, errors = load_rows(args)
 
     if failed_sources and not all_rows:
         # Everything is down even after retries: warn on Telegram, then fail the run
@@ -628,7 +693,8 @@ def main():
             send_telegram(
                 "⚠️ Fire alert system: could not reach NASA FIRMS after "
                 "3 attempts over 15 minutes. No fire data this hour. "
-                "Will try again on the next scheduled run."
+                "Will try again on the next scheduled run.",
+                dry_run=dry_run,
             )
         except Exception as te:
             print(f"Could not send Telegram warning either: {te}")
@@ -678,7 +744,7 @@ def main():
 
     area = "Bulgaria" if FILTER_TO_POLYGON else (BBOX or COUNTRY)
     print(f"Distances measured from {CENTER_NAME} ({CENTER_LAT}, {CENTER_LON}).")
-    if REPORT_MODE:
+    if report_mode:
         clusters = by_distance(cluster_fires(list(good.values())))
         if clusters:
             msg = fmt_clusters(clusters, fmt_title(
@@ -688,9 +754,9 @@ def main():
                 "📋"))
         else:
             msg = f"📋 Report: no active fires detected in {area} in the last 24h. ✅"
-        send_telegram(msg)
+        send_telegram(msg, dry_run=dry_run)
         if clusters:
-            send_map_pins(clusters)
+            send_map_pins(clusters, dry_run=dry_run)
         print("Report sent.")
     elif new_hits:
         clusters = by_distance(cluster_fires(new_hits))
@@ -708,8 +774,8 @@ def main():
                 fresh,
                 f"{len(fresh)} fire(s) with new activity "
                 f"({detections} new detections) in {area}",
-                "🔥")))
-            send_map_pins(fresh)
+                "🔥")), dry_run=dry_run)
+            send_map_pins(fresh, dry_run=dry_run)
             save_cooldown(remember_alerts(fresh, remembered, now))
             print(f"Alert sent: {len(fresh)} fires, {detections} detections, "
                   f"nearest {describe_place(fresh[0])}.")

@@ -61,7 +61,12 @@ read, but development happens on desktop.
   which silently held MODIS to "high" while VIIRS ran at nominal. Don't
   reintroduce a bare numeric default here.
 - `RUN_MODE` (`check` or `report`): set from the workflow's `inputs.mode`,
-  defaulting to `check` for scheduled runs.
+  defaulting to `check` for scheduled runs. Can also be overridden per
+  invocation with `--mode` (see the CLI section below).
+- `FIRE_FILTER_POLYGON` (default `true`): whether the Bulgaria border polygon
+  filter applies at all. Set `"false"` when `FIRE_BBOX`/`FIRE_COUNTRY` point at
+  a different region and you want the rectangle to be the only filter. Any
+  unrecognised value keeps the filter on (fails open, like `env_float`).
 - `FIRE_CENTER_NAME` / `FIRE_CENTER_LAT` / `FIRE_CENTER_LON` (default
   `Sofia` / `42.6977` / `23.3219`): the reference point every fire is measured
   from. Fires are reported as "<distance> <compass direction> of <name>" and
@@ -285,6 +290,13 @@ FIRMS 24h window once.
 - JSON files are opened with `encoding="utf-8-sig"`. The user now edits them on
   Windows, where an editor may add a BOM; without this, `json.load` raises and
   every exclusion zone silently disappears. Keep it.
+- `fire_alerts_action.py` now has a CLI: `--csv FILE` (offline run on a saved
+  FIRMS CSV), `--mode check|report` (per-invocation override), `--dry-run`
+  (print instead of send) and `--version`. Secrets are read lazily via
+  `_required_env()` only when a fetch/send actually needs them, so the module
+  imports and `--help` work with nothing set. Keep it that way — it is what
+  makes the test suite offline. The exclusion-zone parser lives once in
+  `geo.load_zones()` and both scripts share it; don't fork a second copy.
 - The `.strip()` on the three secrets is deliberate — pasted secrets picked up
   trailing whitespace/newlines that caused 400s. Keep it.
 - Times from FIRMS are UTC and `acq_time` is HHMM without a colon — but with
