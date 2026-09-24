@@ -46,8 +46,10 @@ changing a couple of settings (see "Changing the monitored area" below).
 | `seen_fires.json` | Memory of already-reported detections. Starts empty (`[]`). GitHub updates it automatically. |
 | `alert_cooldown.json` | When each fire was last announced, so long-burning fires aren't repeated hourly. Also automatic. |
 | `excluded_zones.json` | Places to ignore — hot factories, flares, landfills. You edit this one by hand. |
-| `geo.py` | Shared distance/direction helpers, plus the central point. Used by both scripts. |
+| `geo.py` | Shared distance/direction helpers, the central point, and the exclusion-zone parser. Used by both scripts. |
 | `find_hotspots.py` | Spots which locations keep repeating. Run it from the Actions tab or on your own machine. Suggests zones; changes nothing. |
+| `tests/` | Offline test suite (`pytest`) covering the geo math, zoning, cooldowns, confidence thresholds and the full `--csv` pipeline. |
+| `pyproject.toml` | Packaging + `pytest`/`ruff` configuration; installs the `fire-alerts` and `find-hotspots` commands. |
 | `AI_CONTEXT.md` | Technical explanation for an AI assistant if you want help modifying the project later. |
 | `README.md` | This file. |
 
@@ -137,6 +139,42 @@ That's it. From now on it runs by itself every hour.
 
 ---
 
+## Running it locally / offline
+
+The whole pipeline also runs on your own machine — including fully offline
+against a saved FIRMS CSV, with no NASA key and no Telegram token. This is how
+you can try it before setting anything up:
+
+```
+pip install .            # or: python fire_alerts_action.py directly
+fire-alerts --csv fires.csv --mode report --dry-run
+```
+
+The options:
+
+| Flag | What it does |
+|------|--------------|
+| `--csv FILE` | Read a FIRMS CSV (same columns NASA returns) instead of fetching live. No key needed. |
+| `--mode check\|report` | Override the run mode for this invocation. `check` = alert on new fires only, `report` = full status of the CSV's contents. |
+| `--dry-run` | Print the Telegram message instead of sending it. Nothing is sent, ever. |
+| `--version` | Print the version and exit. |
+
+Without `--csv`, a local run needs the same three environment variables the
+workflow provides (`FIRMS_MAP_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`);
+they are read only when actually needed, so imports and `--help` never fail for
+lack of secrets. `--dry-run` still works with no secrets at all.
+
+Saved CSV files land wherever you run the command — `seen_fires.json`,
+`alert_cooldown.json` and, if present, `excluded_zones.json` are read from the
+current directory, so you can experiment without touching this repository's
+state.
+
+`find_hotspots.py` is pure standard library and needs no install:
+`pip install .` also provides it as the `find-hotspots` command, or you can run
+the script directly as documented in its section below.
+
+---
+
 ## Changing the monitored area
 
 Open `.github/workflows/fire-alerts.yml` and edit the `env:` block:
@@ -149,7 +187,15 @@ Open `.github/workflows/fire-alerts.yml` and edit the `env:` block:
 The precise border filtering is separate — it lives in `fire_alerts_action.py` as
 `BG_POLYGON`. If you switch countries and want border-accurate filtering, either
 replace that polygon with the new country's outline or set `FILTER_TO_POLYGON =
-False` to rely on the rectangle alone. See `AI_CONTEXT.md` for details.
+False` to rely on the rectangle alone. Since v1.0.0 you can also switch the
+filter off from the workflow's `env:` block, no code edit needed:
+
+```yaml
+          FIRE_FILTER_POLYGON: "false"
+```
+
+Any value you can't mistake for off (`0`, `false`, `no`, `off`) keeps it on, so
+a typo can't silently widen the monitored area. See `AI_CONTEXT.md` for details.
 
 ---
 
@@ -286,7 +332,7 @@ being recorded, so that spot gradually drops out of the report.
 | `MAP_HALF_SPAN_DEG` | `0.02` | Zoom of the satellite photo (~±2 km around the fire). Smaller = closer. |
 | `RETRY_DELAYS` | `[300, 600]` | Seconds to wait between retry attempts on NASA outages. |
 | `EXCLUDE_RADIUS_KM` | `0.2` | Default radius (~200 m) around an entry in `excluded_zones.json`. |
-| `FILTER_TO_POLYGON` | `True` | Whether to apply the border-shape filter at all. |
+| `FILTER_TO_POLYGON` | `True` | Whether to apply the border-shape filter at all (via `FIRE_FILTER_POLYGON` env). |
 | `CENTER_LAT` / `CENTER_LON` | Sofia | Point that distances are measured from (via `FIRE_CENTER_LAT` / `FIRE_CENTER_LON`). |
 | `CENTER_NAME` | `Sofia` | Name used in the messages (via `FIRE_CENTER_NAME`). |
 | `LOCAL_TZ_NAME` | `Europe/Sofia` | Timezone alert times are shown in, UTC always in brackets (via `FIRE_TIMEZONE`). |
@@ -310,6 +356,24 @@ being recorded, so that spot gradually drops out of the report.
 - **Distances are approximate.** They are measured to the centre of a cluster of
   satellite detections, and a satellite places a hotspot to within roughly a
   kilometre. Treat "3 km away" as "a few kilometres away".
+
+---
+
+## Testing
+
+The repository ships an offline test suite that needs no NASA key, no Telegram
+token and no network:
+
+```
+pip install .[dev]
+python -m pytest tests/
+```
+
+Everything is exercised through `--csv` fixtures and a dry-run transport: the
+geometry, clustering, confidence translation, exclusion zones (including the
+`max_frp` override), cooldown state machine, alert formatting, and the full
+check/report pipelines. 145 tests cover it; they run in well under a second.
+`ruff check .` is clean.
 
 ---
 
